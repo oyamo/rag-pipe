@@ -1,0 +1,8 @@
+databaseChangeLog:
+  - changeSet:
+      id: 1-init-documents
+      author: oyamo
+      changes:
+        - sqlFile:
+            path: sql/01_documents.sql
+            relativeToChangelogFile: true

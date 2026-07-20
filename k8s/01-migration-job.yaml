@@ -1,51 +1,45 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: rag-pipe-migrations
+  name: rag-pipe-liquibase-migrations
   namespace: rag-pipe
 spec:
   template:
     metadata:
-      name: rag-pipe-migrations
+      name: rag-pipe-liquibase-migrations
     spec:
       restartPolicy: OnFailure
       containers:
-        - name: migrate-ingestion
-          image: migrate/migrate:v4.17.0
+        - name: liquibase-migration
+          image: liquibase/liquibase:4.27.0
           command:
-            - /migrate
-            - -path=/migrations/ingestion
-            - -database=$(DATABASE_DSN)
-            - up
+            - /liquibase/liquibase
+            - --changelog-file=db.changelog-master.yaml
+            - --url=$(DATABASE_JDBC_URL)
+            - --username=$(POSTGRES_USER)
+            - --password=$(POSTGRES_PASSWORD)
+            - --driver=org.postgresql.Driver
+            - update
           env:
-            - name: DATABASE_DSN
+            - name: DATABASE_JDBC_URL
               valueFrom:
                 secretKeyRef:
                   name: rag-pipe-secrets
-                  key: DATABASE_DSN
-          volumeMounts:
-            - name: migration-ingestion-vol
-              mountPath: /migrations/ingestion
-        - name: migrate-pipe
-          image: migrate/migrate:v4.17.0
-          command:
-            - /migrate
-            - -path=/migrations/pipe
-            - -database=$(DATABASE_DSN)
-            - up
-          env:
-            - name: DATABASE_DSN
+                  key: DATABASE_JDBC_URL
+            - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
                   name: rag-pipe-secrets
-                  key: DATABASE_DSN
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rag-pipe-secrets
+                  key: POSTGRES_PASSWORD
           volumeMounts:
-            - name: migration-pipe-vol
-              mountPath: /migrations/pipe
+            - name: migration-vol
+              mountPath: /liquibase/changelog
       volumes:
-        - name: migration-ingestion-vol
+        - name: migration-vol
           configMap:
-            name: rag-pipe-ingestion-migrations
-        - name: migration-pipe-vol
-          configMap:
-            name: rag-pipe-pipe-migrations
+            name: rag-pipe-liquibase-changelogs

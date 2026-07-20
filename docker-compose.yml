@@ -7,6 +7,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "5432:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
+      interval: 2s
+      timeout: 3s
+      retries: 15
     volumes:
       - pgdata:/var/lib/postgresql/data
 
@@ -37,27 +42,21 @@ services:
       - "4318:4318"
       - "8888:8888"
 
-  migration-ingestion:
-    image: migrate/migrate:v4.17.0
-    volumes:
-      - ./migrations/ingestion:/migrations
+  liquibase-migration:
+    image: liquibase/liquibase:4.27.0
+    working_dir: /liquibase/changelog
     command:
-      - -path=/migrations
-      - -database=${DATABASE_DSN}
-      - up
-    depends_on:
-      - postgres
-
-  migration-pipe:
-    image: migrate/migrate:v4.17.0
+      - --changelog-file=db.changelog-master.yaml
+      - --url=jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      - --username=${POSTGRES_USER}
+      - --password=${POSTGRES_PASSWORD}
+      - --driver=org.postgresql.Driver
+      - update
     volumes:
-      - ./migrations/pipe:/migrations
-    command:
-      - -path=/migrations
-      - -database=${DATABASE_DSN}
-      - up
+      - ./migrations:/liquibase/changelog
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
 
   ingestion:
     image: ghcr.io/oyamo/ingestion:v0.1
@@ -76,11 +75,14 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - postgres
-      - minio
-      - nats
-      - migration-ingestion
-      - otel-collector
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      nats:
+        condition: service_started
+      liquibase-migration:
+        condition: service_completed_successfully
 
   pipe:
     image: ghcr.io/oyamo/pipe:v0.1
@@ -105,11 +107,14 @@ services:
     ports:
       - "8082:8082"
     depends_on:
-      - postgres
-      - minio
-      - nats
-      - migration-pipe
-      - otel-collector
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      nats:
+        condition: service_started
+      liquibase-migration:
+        condition: service_completed_successfully
 
   inference:
     image: ghcr.io/oyamo/inference:v0.1
@@ -123,9 +128,10 @@ services:
     ports:
       - "8081:8081"
     depends_on:
-      - postgres
-      - migration-pipe
-      - otel-collector
+      postgres:
+        condition: service_healthy
+      liquibase-migration:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:

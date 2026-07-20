@@ -1,0 +1,176 @@
+openapi: 3.0.3
+info:
+  title: Enterprise RAG System Unified API
+  description: Unified OpenAPI specification for Ingestion, Pipe, and Inference RAG microservices.
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080
+    description: Ingestion Microservice API
+  - url: http://localhost:8081
+    description: Inference RAG Query API
+  - url: http://localhost:8082
+    description: Pipe Worker Service API
+paths:
+  /health:
+    get:
+      summary: Microservice Health Check
+      description: Returns the operational status of the service.
+      responses:
+        '200':
+          description: Service status ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  service:
+                    type: string
+                    example: ingestion
+  /api/v1/documents:
+    post:
+      summary: Upload Document for Ingestion
+      description: Uploads a document to MinIO storage, records metadata in PostgreSQL, and publishes an ingestion event to NATS JetStream.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                name:
+                  type: string
+                  example: annual_report.pdf
+                description:
+                  type: string
+                  example: Financial results for fiscal year 2025
+      responses:
+        '201':
+          description: Document uploaded and ingestion event published
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        '400':
+          description: Invalid multipart form payload
+        '500':
+          description: Storage or database failure
+  /api/v1/query:
+    post:
+      summary: Execute RAG Vector Similarity Query
+      description: Computes vector embedding for query text and executes pgvector cosine similarity search over chunk vectors.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - query
+              properties:
+                query:
+                  type: string
+                  example: What was the Q3 revenue growth forecast?
+                top_k:
+                  type: integer
+                  default: 10
+                  example: 5
+                min_similarity:
+                  type: number
+                  format: double
+                  default: 0.0
+                  example: 0.4
+                filter:
+                  type: object
+                  example:
+                    language: en
+      responses:
+        '200':
+          description: Vector similarity search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+        '400':
+          description: Invalid JSON payload or missing query field
+        '500':
+          description: Database query or vector search failure
+components:
+  schemas:
+    DocumentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 018fa39e-2a62-7489-8d19-418b76c95c80
+        name:
+          type: string
+          example: annual_report.pdf
+        description:
+          type: string
+          example: Financial results for fiscal year 2025
+        file_key:
+          type: string
+          example: documents/2026/07/018fa39e-2a62-7489-8d19-418b76c95c80.pdf
+        file_size:
+          type: integer
+          example: 1048576
+        content_type:
+          type: string
+          example: application/pdf
+        status:
+          type: string
+          example: PENDING
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    QueryResultItem:
+      type: object
+      properties:
+        chunk_id:
+          type: string
+          format: uuid
+        document_id:
+          type: string
+          format: uuid
+        vector_id:
+          type: string
+          format: uuid
+        index:
+          type: integer
+        content:
+          type: string
+        similarity:
+          type: number
+          format: double
+        model_version:
+          type: string
+        metadata:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+    QueryResponse:
+      type: object
+      properties:
+        query:
+          type: string
+        total:
+          type: integer
+        latency_ms:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/QueryResultItem'

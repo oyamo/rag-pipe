@@ -1,0 +1,8 @@
+databaseChangeLog:
+  - changeSet:
+      id: 2-init-vectors-and-chunks
+      author: oyamo
+      changes:
+        - sqlFile:
+            path: sql/02_vectors_and_chunks.sql
+            relativeToChangelogFile: true

@@ -1,0 +1,7 @@
+databaseChangeLog:
+  - include:
+      file: changelog-ingestion.yaml
+      relativeToChangelogFile: true
+  - include:
+      file: changelog-pipe.yaml
+      relativeToChangelogFile: true
