@@ -30,6 +30,20 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+      initContainers:
+        - name: migration-sidecar
+          image: migrate/migrate:v4.17.0
+          command:
+            - /migrate
+            - -path=/migrations/ingestion
+            - -database=$(DATABASE_DSN)
+            - up
+          env:
+            - name: DATABASE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: rag-pipe-secrets
+                  key: DATABASE_DSN
       containers:
         - name: ingestion
           image: ghcr.io/oyamo/ingestion:v0.1
@@ -60,6 +74,16 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+        - name: otel-sidecar
+          image: otel/opentelemetry-collector-contrib:0.98.0
+          args: [ "--config=/etc/otelcol-contrib/config.yaml" ]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler

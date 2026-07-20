@@ -29,6 +29,36 @@ services:
       - "4222:4222"
       - "8222:8222"
 
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.98.0
+    command: [ "--config=/etc/otelcol-contrib/config.yaml" ]
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8888:8888"
+
+  migration-ingestion:
+    image: migrate/migrate:v4.17.0
+    volumes:
+      - ./migrations/ingestion:/migrations
+    command:
+      - -path=/migrations
+      - -database=${DATABASE_DSN}
+      - up
+    depends_on:
+      - postgres
+
+  migration-pipe:
+    image: migrate/migrate:v4.17.0
+    volumes:
+      - ./migrations/pipe:/migrations
+    command:
+      - -path=/migrations
+      - -database=${DATABASE_DSN}
+      - up
+    depends_on:
+      - postgres
+
   ingestion:
     image: ghcr.io/oyamo/ingestion:v0.1
     environment:
@@ -49,6 +79,8 @@ services:
       - postgres
       - minio
       - nats
+      - migration-ingestion
+      - otel-collector
 
   pipe:
     image: ghcr.io/oyamo/pipe:v0.1
@@ -76,6 +108,8 @@ services:
       - postgres
       - minio
       - nats
+      - migration-pipe
+      - otel-collector
 
   inference:
     image: ghcr.io/oyamo/inference:v0.1
@@ -90,6 +124,8 @@ services:
       - "8081:8081"
     depends_on:
       - postgres
+      - migration-pipe
+      - otel-collector
 
 volumes:
   pgdata:

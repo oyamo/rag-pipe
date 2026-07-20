@@ -1,0 +1,51 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rag-pipe-migrations
+  namespace: rag-pipe
+spec:
+  template:
+    metadata:
+      name: rag-pipe-migrations
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate-ingestion
+          image: migrate/migrate:v4.17.0
+          command:
+            - /migrate
+            - -path=/migrations/ingestion
+            - -database=$(DATABASE_DSN)
+            - up
+          env:
+            - name: DATABASE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: rag-pipe-secrets
+                  key: DATABASE_DSN
+          volumeMounts:
+            - name: migration-ingestion-vol
+              mountPath: /migrations/ingestion
+        - name: migrate-pipe
+          image: migrate/migrate:v4.17.0
+          command:
+            - /migrate
+            - -path=/migrations/pipe
+            - -database=$(DATABASE_DSN)
+            - up
+          env:
+            - name: DATABASE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: rag-pipe-secrets
+                  key: DATABASE_DSN
+          volumeMounts:
+            - name: migration-pipe-vol
+              mountPath: /migrations/pipe
+      volumes:
+        - name: migration-ingestion-vol
+          configMap:
+            name: rag-pipe-ingestion-migrations
+        - name: migration-pipe-vol
+          configMap:
+            name: rag-pipe-pipe-migrations
