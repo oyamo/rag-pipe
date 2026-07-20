@@ -1,0 +1,37 @@
+name: CI Test Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+
+      - name: Test Ingestion Microservice
+        run: |
+          cd ingestion
+          go test -v ./...
+
+      - name: Test Inference Microservice
+        run: |
+          cd inference
+          go test -v ./...
+
+      - name: Test Pipe Microservice
+        run: |
+          cd pipe
+          go test -v ./...
