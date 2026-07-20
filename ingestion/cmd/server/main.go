@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,21 +20,35 @@ import (
 )
 
 func main() {
-	cfg := config.LoadConfig()
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
+
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		slog.Error("failed to load configuration", "error", err)
+		os.Exit(1)
+	}
 
 	telProvider, err := telemetry.InitTelemetry(cfg.OTelServiceName)
 	if err != nil {
-		log.Fatalf("failed to initialize telemetry: %v", err)
+		slog.Error("failed to initialize telemetry", "error", err)
+		os.Exit(1)
 	}
 
 	db, err := sql.Open("postgres", cfg.DatabaseDSN)
 	if err != nil {
-		log.Fatalf("failed to connect to database: %v", err)
+		slog.Error("failed to connect to database", "error", err)
+		os.Exit(1)
 	}
+
+	db.SetMaxOpenConns(50)
+	db.SetMaxIdleConns(25)
+	db.SetConnMaxLifetime(15 * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
 
 	err = db.Ping()
 	if err != nil {
-		log.Printf("warning: database ping failed: %v", err)
+		slog.Warn("database ping failed", "error", err)
 	}
 
 	storageRepo, err := repository.NewStorageRepository(
@@ -45,12 +59,13 @@ func main() {
 		cfg.MinioUseSSL,
 	)
 	if err != nil {
-		log.Fatalf("failed to initialize storage repository: %v", err)
+		slog.Error("failed to initialize storage repository", "error", err)
+		os.Exit(1)
 	}
 
 	publisher, err := repository.NewEventPublisher(cfg.NatsURL, cfg.NatsTopic)
 	if err != nil {
-		log.Printf("warning: failed to connect to nats: %v", err)
+		slog.Warn("failed to connect to nats", "error", err)
 	}
 
 	docRepo := repository.NewDocumentRepository(db)
@@ -77,22 +92,23 @@ func main() {
 	signal.Notify(stopSignal, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("Ingestion service listening on port %s...", cfg.Port)
+		slog.Info("Ingestion service listening", "port", cfg.Port)
 		err := server.ListenAndServe()
 		if err != nil && err != http.ErrServerClosed {
-			log.Fatalf("http server error: %v", err)
+			slog.Error("http server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 
 	<-stopSignal
-	log.Println("Shutting down ingestion service gracefully...")
+	slog.Info("Shutting down ingestion service gracefully...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	err = server.Shutdown(ctx)
 	if err != nil {
-		log.Printf("server shutdown error: %v", err)
+		slog.Error("server shutdown error", "error", err)
 	}
 
 	if db != nil {
@@ -107,5 +123,5 @@ func main() {
 		telProvider.Shutdown(ctx)
 	}
 
-	log.Println("Ingestion service stopped.")
+	slog.Info("Ingestion service stopped.")
 }
