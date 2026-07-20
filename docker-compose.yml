@@ -1,0 +1,96 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:RELEASE.2024-05-10T01-41-38Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  nats:
+    image: nats:2.10-alpine
+    command: "-js -sd /data"
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  ingestion:
+    image: ghcr.io/oyamo/ingestion:v0.1
+    environment:
+      PORT: ${PORT}
+      DATABASE_DSN: ${DATABASE_DSN}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      MINIO_USE_SSL: ${MINIO_USE_SSL}
+      NATS_URL: ${NATS_URL}
+      NATS_TOPIC: ${NATS_TOPIC}
+      OTEL_SERVICE_NAME: ingestion-service
+      OTEL_COLLECTOR_URL: ${OTEL_COLLECTOR_URL}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      - minio
+      - nats
+
+  pipe:
+    image: ghcr.io/oyamo/pipe:v0.1
+    environment:
+      PORT: ${PIPE_PORT}
+      DATABASE_DSN: ${DATABASE_DSN}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      MINIO_USE_SSL: ${MINIO_USE_SSL}
+      NATS_URL: ${NATS_URL}
+      NATS_STREAM: ${NATS_STREAM}
+      NATS_SUBJECT: ${NATS_SUBJECT}
+      NATS_CONSUMER: ${NATS_CONSUMER}
+      NATS_DLQ_SUBJECT: ${NATS_DLQ_SUBJECT}
+      NATS_MAX_DELIVERIES: ${NATS_MAX_DELIVERIES}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION}
+      EMBEDDING_MODEL_VERSION: ${EMBEDDING_MODEL_VERSION}
+      OTEL_SERVICE_NAME: pipe-service
+    ports:
+      - "8082:8082"
+    depends_on:
+      - postgres
+      - minio
+      - nats
+
+  inference:
+    image: ghcr.io/oyamo/inference:v0.1
+    environment:
+      PORT: ${INFERENCE_PORT}
+      DATABASE_DSN: ${DATABASE_DSN}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION}
+      EMBEDDING_MODEL_VERSION: ${EMBEDDING_MODEL_VERSION}
+      OTEL_SERVICE_NAME: inference-service
+      OTEL_COLLECTOR_URL: ${OTEL_COLLECTOR_URL}
+    ports:
+      - "8081:8081"
+    depends_on:
+      - postgres
+
+volumes:
+  pgdata:
+  miniodata:

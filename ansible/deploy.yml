@@ -1,0 +1,67 @@
+- name: Deploy RAG Microservices to Kubernetes Cluster
+  hosts: k8s_control_plane
+  gather_facts: false
+  tasks:
+    - name: Apply Namespace
+      kubernetes.core.k8s:
+        state: present
+        src: ../k8s/00-namespace.yaml
+
+    - name: Apply ConfigMaps and Secrets
+      kubernetes.core.k8s:
+        state: present
+        src: ../k8s/01-secrets-configmap.yaml
+
+    - name: Deploy PostgreSQL StatefulSet
+      kubernetes.core.k8s:
+        state: present
+        src: ../k8s/02-postgres.yaml
+
+    - name: Deploy MinIO StatefulSet
+      kubernetes.core.k8s:
+        state: present
+        src: ../k8s/03-minio.yaml
+
+    - name: Deploy NATS JetStream StatefulSet
+      kubernetes.core.k8s:
+        state: present
+        src: ../k8s/04-nats.yaml
+
+    - name: Deploy Ingestion Microservice
+      kubernetes.core.k8s:
+        state: present
+        src: ../k8s/05-ingestion.yaml
+
+    - name: Deploy Pipe Worker Microservice
+      kubernetes.core.k8s:
+        state: present
+        src: ../k8s/06-pipe.yaml
+
+    - name: Deploy Inference Microservice
+      kubernetes.core.k8s:
+        state: present
+        src: ../k8s/07-inference.yaml
+
+    - name: Perform Rolling Restart of Ingestion Service
+      ansible.builtin.command:
+        cmd: kubectl rollout restart deployment/ingestion -n rag-pipe
+
+    - name: Perform Rolling Restart of Pipe Worker Service
+      ansible.builtin.command:
+        cmd: kubectl rollout restart deployment/pipe -n rag-pipe
+
+    - name: Perform Rolling Restart of Inference Service
+      ansible.builtin.command:
+        cmd: kubectl rollout restart deployment/inference -n rag-pipe
+
+    - name: Wait for Ingestion Rollout Status
+      ansible.builtin.command:
+        cmd: kubectl rollout status deployment/ingestion -n rag-pipe --timeout=120s
+
+    - name: Wait for Pipe Worker Rollout Status
+      ansible.builtin.command:
+        cmd: kubectl rollout status deployment/pipe -n rag-pipe --timeout=120s
+
+    - name: Wait for Inference Rollout Status
+      ansible.builtin.command:
+        cmd: kubectl rollout status deployment/inference -n rag-pipe --timeout=120s

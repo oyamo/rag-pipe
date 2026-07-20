@@ -34,9 +34,9 @@ jobs:
           file: ./ingestion/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/ingestion:latest
-            ghcr.io/${{ github.repository_owner }}/ingestion:v0.1
-            ghcr.io/${{ github.repository_owner }}/ingestion:${{ github.sha }}
+            ghcr.io/oyamo/ingestion:latest
+            ghcr.io/oyamo/ingestion:v0.1
+            ghcr.io/oyamo/ingestion:${{ github.sha }}
 
       - name: Build and Push Inference Image
         uses: docker/build-push-action@v5
@@ -45,9 +45,9 @@ jobs:
           file: ./inference/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/inference:latest
-            ghcr.io/${{ github.repository_owner }}/inference:v0.1
-            ghcr.io/${{ github.repository_owner }}/inference:${{ github.sha }}
+            ghcr.io/oyamo/inference:latest
+            ghcr.io/oyamo/inference:v0.1
+            ghcr.io/oyamo/inference:${{ github.sha }}
 
       - name: Build and Push Pipe Image
         uses: docker/build-push-action@v5
@@ -56,6 +56,6 @@ jobs:
           file: ./pipe/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/pipe:latest
-            ghcr.io/${{ github.repository_owner }}/pipe:v0.1
-            ghcr.io/${{ github.repository_owner }}/pipe:${{ github.sha }}
+            ghcr.io/oyamo/pipe:latest
+            ghcr.io/oyamo/pipe:v0.1
+            ghcr.io/oyamo/pipe:${{ github.sha }}
