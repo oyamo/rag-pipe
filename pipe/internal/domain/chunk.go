@@ -29,6 +29,8 @@ type ChunkMetadata struct {
 	StartCharOffset     int       `json:"start_char_offset"`
 	EndCharOffset       int       `json:"end_char_offset"`
 	TokenCount          int       `json:"token_count"`
+	Entities            []string  `json:"entities,omitempty"`
+	Keywords            []string  `json:"keywords,omitempty"`
 }
 
 type Chunk struct {

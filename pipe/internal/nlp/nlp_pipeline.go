@@ -2,6 +2,7 @@ package nlp
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -58,7 +59,10 @@ func (p *NLPPipeline) EnrichChunk(ctx context.Context, chunk *domain.Chunk) bool
 		slog.Warn("statistical ner extraction failed", "error", err)
 	}
 
-	_ = entities
+	var entStrings []string
+	for _, ent := range entities {
+		entStrings = append(entStrings, fmt.Sprintf("%s:%s", ent.Category, ent.Text))
+	}
 
 	var kwStrings []string
 	for _, kw := range keywords {
@@ -67,6 +71,8 @@ func (p *NLPPipeline) EnrichChunk(ctx context.Context, chunk *domain.Chunk) bool
 
 	chunk.Metadata.Language = docProfile.Language
 	chunk.Metadata.TokenCount = docProfile.TokenCount
+	chunk.Metadata.Entities = entStrings
+	chunk.Metadata.Keywords = kwStrings
 
 	sig := p.lsh.ComputeSignature(normalizedText)
 	isNearDup, existingVecID := p.lsh.FindNearDuplicate(ctx, sig)

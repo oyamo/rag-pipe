@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/google/uuid"
 	"github.com/oyamo/rag-pipe/pipe/internal/domain"
 	"github.com/oyamo/rag-pipe/pipe/internal/nlp"
 	"github.com/oyamo/rag-pipe/pipe/internal/pipeline"

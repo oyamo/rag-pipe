@@ -20,7 +20,10 @@ import (
 )
 
 func main() {
-	cfg := config.LoadConfig()
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		log.Fatalf("failed to load config: %v", err)
+	}
 
 	telProvider, err := telemetry.InitTelemetry(cfg.OTelServiceName)
 	if err != nil {
