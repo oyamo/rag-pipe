@@ -1,28 +1,21 @@
-.PHONY: restart restart-clean pull build help
+.PHONY: restart pull build help
 
 restart:
-	docker compose down
+	docker compose stop ingestion pipe inference
+	docker compose rm -f ingestion pipe inference
 	docker rmi ghcr.io/oyamo/ingestion:v0.1 ghcr.io/oyamo/inference:v0.1 ghcr.io/oyamo/pipe:v0.1 --force || true
-	docker compose pull
-	docker compose up -d
-	docker compose ps
-
-restart-clean:
-	docker compose down -v --remove-orphans
-	docker rmi ghcr.io/oyamo/ingestion:v0.1 ghcr.io/oyamo/inference:v0.1 ghcr.io/oyamo/pipe:v0.1 --force || true
-	docker compose pull
-	docker compose up -d
+	docker compose pull ingestion pipe inference
+	docker compose up -d ingestion pipe inference
 	docker compose ps
 
 pull:
-	docker compose pull
+	docker compose pull ingestion pipe inference
 
 build:
-	docker compose up -d --build
+	docker compose up -d --build ingestion pipe inference
 
 help:
 	@echo "Available make targets:"
-	@echo "  make restart       - Stop containers, delete old images, pull fresh GHCR images, and start"
-	@echo "  make restart-clean - Stop containers & volumes, delete old images, pull fresh GHCR images, and start"
-	@echo "  make pull          - Pull latest GHCR images"
-	@echo "  make build         - Build local images and start"
+	@echo "  make restart - Stop & update app containers (ingestion, pipe, inference) without touching Postgres, MinIO, or NATS infra"
+	@echo "  make pull    - Pull latest app images"
+	@echo "  make build   - Build local app images and start"
