@@ -36,6 +36,18 @@ spec:
           ports:
             - containerPort: 4222
             - containerPort: 8222
+          readinessProbe:
+            httpGet:
+              path: /connz
+              port: 8222
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /varz
+              port: 8222
+            initialDelaySeconds: 10
+            periodSeconds: 10
           resources:
             requests:
               cpu: 100m
