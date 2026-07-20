@@ -35,6 +35,7 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/ingestion:latest
+            ghcr.io/${{ github.repository_owner }}/ingestion:v0.1
             ghcr.io/${{ github.repository_owner }}/ingestion:${{ github.sha }}
 
       - name: Build and Push Inference Image
@@ -45,6 +46,7 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/inference:latest
+            ghcr.io/${{ github.repository_owner }}/inference:v0.1
             ghcr.io/${{ github.repository_owner }}/inference:${{ github.sha }}
 
       - name: Build and Push Pipe Image
@@ -55,4 +57,5 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/pipe:latest
+            ghcr.io/${{ github.repository_owner }}/pipe:v0.1
             ghcr.io/${{ github.repository_owner }}/pipe:${{ github.sha }}
