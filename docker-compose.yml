@@ -82,8 +82,6 @@ services:
     volumes:
       - grafanadata:/var/lib/grafana
       - ./grafana-datasource.yaml:/etc/grafana/provisioning/datasources/datasource.yaml
-      - ./grafana-dashboard-provider.yaml:/etc/grafana/provisioning/dashboards/provider.yaml
-      - ./grafana-dashboard-rag.json:/etc/grafana/provisioning/dashboards/rag_overview.json
     depends_on:
       - tempo
       - prometheus
