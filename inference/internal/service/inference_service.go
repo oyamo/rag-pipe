@@ -11,6 +11,7 @@ import (
 	"github.com/oyamo/rag-pipe/inference/internal/repository"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 const (
@@ -19,18 +20,26 @@ const (
 )
 
 type InferenceService struct {
-	repo         *repository.InferenceRepository
-	dimension    int
-	modelVersion string
-	client       *client.OpenRouterClient
+	repo           *repository.InferenceRepository
+	dimension      int
+	modelVersion   string
+	client         *client.OpenRouterClient
+	queryCounter   metric.Int64Counter
+	latencyHisto   metric.Float64Histogram
 }
 
 func NewInferenceService(repo *repository.InferenceRepository, dimension int, modelVersion string, openRouterClient *client.OpenRouterClient) *InferenceService {
+	meter := otel.GetMeterProvider().Meter("inference-service")
+	qCounter, _ := meter.Int64Counter("rag_queries_total", metric.WithDescription("Total RAG queries executed"))
+	latHisto, _ := meter.Float64Histogram("rag_query_duration_seconds", metric.WithDescription("RAG query latency in seconds"), metric.WithUnit("s"))
+
 	return &InferenceService{
-		repo:         repo,
-		dimension:    dimension,
-		modelVersion: modelVersion,
-		client:       openRouterClient,
+		repo:           repo,
+		dimension:      dimension,
+		modelVersion:   modelVersion,
+		client:         openRouterClient,
+		queryCounter:   qCounter,
+		latencyHisto:   latHisto,
 	}
 }
 
@@ -40,8 +49,18 @@ func (s *InferenceService) QueryRAG(ctx context.Context, req *domain.QueryReques
 	ctx, span := tracer.Start(ctx, "InferenceService.QueryRAG")
 	defer span.End()
 
+	defer func() {
+		durationSec := time.Since(startTime).Seconds()
+		if s.latencyHisto != nil {
+			s.latencyHisto.Record(ctx, durationSec, metric.WithAttributes(attribute.String("service", "inference-service")))
+		}
+	}()
+
 	trimmed := strings.TrimSpace(req.Query)
 	if trimmed == "" {
+		if s.queryCounter != nil {
+			s.queryCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
+		}
 		return nil, fmt.Errorf("query text cannot be empty")
 	}
 
@@ -50,7 +69,6 @@ func (s *InferenceService) QueryRAG(ctx context.Context, req *domain.QueryReques
 		minSimilarity = DefaultMinSimilarity
 	}
 
-	// Sub-span 1: Generate Query Embedding (OpenRouter API)
 	embCtx, embSpan := tracer.Start(ctx, "InferenceService.GenerateQueryEmbedding")
 	t0 := time.Now()
 	queryVec, err := s.generateQueryEmbedding(embCtx, trimmed)
@@ -60,10 +78,12 @@ func (s *InferenceService) QueryRAG(ctx context.Context, req *domain.QueryReques
 
 	if err != nil {
 		span.RecordError(err)
+		if s.queryCounter != nil {
+			s.queryCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "embedding_error")))
+		}
 		return nil, fmt.Errorf("failed to generate query embedding: %w", err)
 	}
 
-	// Sub-span 2: Search Vector Database (Postgres pgvector)
 	dbCtx, dbSpan := tracer.Start(ctx, "InferenceService.SearchSimilarVectors")
 	t0 = time.Now()
 	results, err := s.repo.SearchSimilarVectors(dbCtx, queryVec, minSimilarity, req.TopK, req.TenantID)
@@ -73,7 +93,14 @@ func (s *InferenceService) QueryRAG(ctx context.Context, req *domain.QueryReques
 
 	if err != nil {
 		span.RecordError(err)
+		if s.queryCounter != nil {
+			s.queryCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "db_error")))
+		}
 		return nil, fmt.Errorf("inference repository query error: %w", err)
+	}
+
+	if s.queryCounter != nil {
+		s.queryCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "success")))
 	}
 
 	latencyMs := time.Since(startTime).Milliseconds()
