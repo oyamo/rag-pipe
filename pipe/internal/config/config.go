@@ -28,6 +28,7 @@ type Config struct {
 	OpenRouterAPIKey      string
 	OpenRouterBaseURL     string
 	OTelServiceName       string
+	OTelCollectorURL      string
 }
 
 func loadDotEnv() {
@@ -180,6 +181,11 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	otelCollectorURL, err := getRequiredEnv("OTEL_COLLECTOR_URL")
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		Port:                  port,
 		DatabaseDSN:           dsn,
@@ -200,5 +206,6 @@ func LoadConfig() (*Config, error) {
 		OpenRouterAPIKey:      openRouterAPIKey,
 		OpenRouterBaseURL:     openRouterBaseURL,
 		OTelServiceName:       otelServiceName,
+		OTelCollectorURL:      otelCollectorURL,
 	}, nil
 }
