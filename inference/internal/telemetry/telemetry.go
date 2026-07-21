@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
@@ -30,10 +31,15 @@ type TelemetryProvider struct {
 
 type TracingHandler struct {
 	slog.Handler
+	serviceName string
 }
 
 func NewTracingHandler(h slog.Handler) slog.Handler {
-	return &TracingHandler{Handler: h}
+	return &TracingHandler{Handler: h, serviceName: "app"}
+}
+
+func NewTracingHandlerWithService(h slog.Handler, serviceName string) slog.Handler {
+	return &TracingHandler{Handler: h, serviceName: serviceName}
 }
 
 func (h *TracingHandler) Handle(ctx context.Context, r slog.Record) error {
@@ -44,6 +50,29 @@ func (h *TracingHandler) Handle(ctx context.Context, r slog.Record) error {
 			slog.String("span_id", sc.SpanID().String()),
 		)
 	}
+
+	if otelLogger := global.GetLoggerProvider().Logger(h.serviceName); otelLogger != nil {
+		var llog otellog.Record
+		llog.SetTimestamp(r.Time)
+		llog.SetBody(otellog.StringValue(r.Message))
+
+		if span := trace.SpanFromContext(ctx); span.SpanContext().IsValid() {
+			sc := span.SpanContext()
+			llog.SetTraceID(sc.TraceID())
+			llog.SetSpanID(sc.SpanID())
+		}
+
+		r.Attrs(func(a slog.Attr) bool {
+			llog.AddAttributes(otellog.KeyValue{
+				Key:   a.Key,
+				Value: otellog.StringValue(a.Value.String()),
+			})
+			return true
+		})
+
+		otelLogger.Emit(ctx, llog)
+	}
+
 	return h.Handler.Handle(ctx, r)
 }
 
@@ -59,7 +88,7 @@ func InitTelemetry(serviceName, collectorURL string) (*TelemetryProvider, error)
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
-	// 1. Traces (OTLP HTTP)
+	// 1. Traces
 	traceExporter, err := otlptracehttp.New(
 		ctx,
 		otlptracehttp.WithEndpoint(collectorURL),
@@ -76,7 +105,7 @@ func InitTelemetry(serviceName, collectorURL string) (*TelemetryProvider, error)
 	)
 	otel.SetTracerProvider(tp)
 
-	// 2. Metrics (OTLP HTTP)
+	// 2. Metrics
 	metricExporter, err := otlpmetrichttp.New(
 		ctx,
 		otlpmetrichttp.WithEndpoint(collectorURL),
@@ -92,7 +121,7 @@ func InitTelemetry(serviceName, collectorURL string) (*TelemetryProvider, error)
 	)
 	otel.SetMeterProvider(mp)
 
-	// 3. Logs (OTLP HTTP)
+	// 3. Logs
 	logExporter, err := otlploghttp.New(
 		ctx,
 		otlploghttp.WithEndpoint(collectorURL),

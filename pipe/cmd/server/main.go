@@ -22,10 +22,6 @@ import (
 )
 
 func main() {
-	jsonHandler := slog.NewJSONHandler(os.Stdout, nil)
-	logger := slog.New(telemetry.NewTracingHandler(jsonHandler))
-	slog.SetDefault(logger)
-
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		slog.Error("failed to load configuration", "error", err)
@@ -37,6 +33,10 @@ func main() {
 		slog.Error("failed to initialize telemetry", "error", err)
 		os.Exit(1)
 	}
+
+	jsonHandler := slog.NewJSONHandler(os.Stdout, nil)
+	logger := slog.New(telemetry.NewTracingHandlerWithService(jsonHandler, cfg.OTelServiceName))
+	slog.SetDefault(logger)
 
 	db, err := sql.Open("postgres", cfg.DatabaseDSN)
 	if err != nil {
