@@ -45,6 +45,23 @@ services:
       - "4318:4318" # OTLP HTTP
       - "3200:3200" # Tempo HTTP API
 
+  prometheus:
+    image: prom/prometheus:latest
+    command: [ "--config.file=/etc/prometheus/prometheus.yml" ]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheusdata:/prometheus
+    ports:
+      - "9090:9090"
+
+  loki:
+    image: grafana/loki:latest
+    command: [ "-config.file=/etc/loki/local-config.yaml" ]
+    ports:
+      - "3100:3100"
+    volumes:
+      - lokidata:/loki
+
   grafana:
     image: grafana/grafana:latest
     environment:
@@ -57,6 +74,8 @@ services:
       - ./grafana-datasource.yaml:/etc/grafana/provisioning/datasources/datasource.yaml
     depends_on:
       - tempo
+      - prometheus
+      - loki
 
   liquibase-migration:
     image: liquibase/liquibase:4.27.0
@@ -164,4 +183,6 @@ volumes:
   pgdata:
   miniodata:
   tempodata:
+  prometheusdata:
+  lokidata:
   grafanadata:
