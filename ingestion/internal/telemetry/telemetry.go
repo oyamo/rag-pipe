@@ -58,15 +58,14 @@ func (h *TracingHandler) Handle(ctx context.Context, r slog.Record) error {
 
 		if span := trace.SpanFromContext(ctx); span.SpanContext().IsValid() {
 			sc := span.SpanContext()
-			llog.SetTraceID(sc.TraceID())
-			llog.SetSpanID(sc.SpanID())
+			llog.AddAttributes(
+				otellog.String("trace_id", sc.TraceID().String()),
+				otellog.String("span_id", sc.SpanID().String()),
+			)
 		}
 
 		r.Attrs(func(a slog.Attr) bool {
-			llog.AddAttributes(otellog.KeyValue{
-				Key:   a.Key,
-				Value: otellog.StringValue(a.Value.String()),
-			})
+			llog.AddAttributes(otellog.String(a.Key, a.Value.String()))
 			return true
 		})
 
