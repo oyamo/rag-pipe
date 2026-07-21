@@ -72,7 +72,8 @@ func main() {
 	qualityFilter := pipeline.NewQualityFilter()
 	segmenter := pipeline.NewDocumentSegmenter(450, 80)
 	deduplicator := pipeline.NewChunkDeduplicator(vectorRepo, 10000)
-	vectorizer := pipeline.NewVectorizationScheduler(cfg.EmbeddingDimension, cfg.EmbeddingModelVersion)
+	openRouterClient := pipeline.NewOpenRouterClient(cfg.OpenRouterAPIKey, cfg.OpenRouterBaseURL)
+	vectorizer := pipeline.NewVectorizationScheduler(cfg.EmbeddingDimension, cfg.EmbeddingModelVersion, openRouterClient)
 	nlpPipeline := nlp.NewNLPPipeline(nil, nil, 64, 16)
 
 	pipelineWorker := worker.NewPipelineWorker(

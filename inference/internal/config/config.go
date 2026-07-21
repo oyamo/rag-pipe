@@ -1,9 +1,11 @@
 package config
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -11,7 +13,36 @@ type Config struct {
 	DatabaseDSN           string
 	EmbeddingDimension    int
 	EmbeddingModelVersion string
+	OpenRouterAPIKey      string
+	OpenRouterBaseURL     string
 	OTelServiceName       string
+}
+
+func loadDotEnv() {
+	files := []string{".env", "../.env", "../../.env"}
+	for _, path := range files {
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				k := strings.TrimSpace(parts[0])
+				v := strings.TrimSpace(parts[1])
+				v = strings.Trim(v, `"'`)
+				if os.Getenv(k) == "" {
+					_ = os.Setenv(k, v)
+				}
+			}
+		}
+		_ = f.Close()
+	}
 }
 
 func getRequiredEnv(key string) (string, error) {
@@ -22,7 +53,17 @@ func getRequiredEnv(key string) (string, error) {
 	return val, nil
 }
 
+func getOptionalEnv(key, defaultVal string) string {
+	val, ok := os.LookupEnv(key)
+	if !ok || val == "" {
+		return defaultVal
+	}
+	return val
+}
+
 func LoadConfig() (*Config, error) {
+	loadDotEnv()
+
 	port, err := getRequiredEnv("PORT")
 	if err != nil {
 		return nil, err
@@ -47,6 +88,9 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	openRouterAPIKey, _ := getRequiredEnv("OPENROUTER_API_KEY")
+	openRouterBaseURL := getOptionalEnv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/embeddings")
+
 	otelServiceName, err := getRequiredEnv("OTEL_SERVICE_NAME")
 	if err != nil {
 		return nil, err
@@ -57,6 +101,8 @@ func LoadConfig() (*Config, error) {
 		DatabaseDSN:           dsn,
 		EmbeddingDimension:    embeddingDimension,
 		EmbeddingModelVersion: embeddingModelVersion,
+		OpenRouterAPIKey:      openRouterAPIKey,
+		OpenRouterBaseURL:     openRouterBaseURL,
 		OTelServiceName:       otelServiceName,
 	}, nil
 }

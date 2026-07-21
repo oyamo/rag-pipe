@@ -12,6 +12,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/oyamo/rag-pipe/inference/internal/client"
 	"github.com/oyamo/rag-pipe/inference/internal/config"
 	"github.com/oyamo/rag-pipe/inference/internal/handler"
 	"github.com/oyamo/rag-pipe/inference/internal/repository"
@@ -51,8 +52,9 @@ func main() {
 		slog.Warn("database ping failed", "error", err)
 	}
 
+	openRouterClient := client.NewOpenRouterClient(cfg.OpenRouterAPIKey, cfg.OpenRouterBaseURL)
 	inferRepo := repository.NewInferenceRepository(db)
-	inferService := service.NewInferenceService(inferRepo, cfg.EmbeddingDimension, cfg.EmbeddingModelVersion)
+	inferService := service.NewInferenceService(inferRepo, cfg.EmbeddingDimension, cfg.EmbeddingModelVersion, openRouterClient)
 	inferHandler := handler.NewInferenceHandler(inferService)
 
 	mux := http.NewServeMux()

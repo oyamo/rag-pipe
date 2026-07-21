@@ -3,12 +3,16 @@ package pipeline
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/oyamo/rag-pipe/pipe/internal/domain"
 	"go.opentelemetry.io/otel"
+)
+
+const (
+	DefaultMaxRetries     = 3
+	DefaultRetryBackoffMs = 100
 )
 
 type VectorizationScheduler struct {
@@ -17,21 +21,17 @@ type VectorizationScheduler struct {
 	maxBatchSize int
 	maxTokens    int
 	timeout      time.Duration
+	client       *OpenRouterClient
 }
 
-func NewVectorizationScheduler(dimension int, modelVersion string) *VectorizationScheduler {
-	if dimension <= 0 {
-		dimension = 1536
-	}
-	if modelVersion == "" {
-		modelVersion = "text-embedding-3-small"
-	}
+func NewVectorizationScheduler(dimension int, modelVersion string, client *OpenRouterClient) *VectorizationScheduler {
 	return &VectorizationScheduler{
 		dimension:    dimension,
 		modelVersion: modelVersion,
 		maxBatchSize: 64,
 		maxTokens:    8192,
 		timeout:      400 * time.Millisecond,
+		client:       client,
 	}
 }
 
@@ -43,37 +43,64 @@ func (v *VectorizationScheduler) GenerateBatchEmbeddings(ctx context.Context, ch
 		return nil, nil
 	}
 
-	var vectors []domain.Vector
-	maxRetries := 3
+	inputs := make([]domain.MultimodalInput, len(chunks))
+	for i, chunk := range chunks {
+		inputs[i] = domain.MultimodalInput{
+			Content: []domain.MultimodalContentItem{
+				{
+					Type: ContentTypeText,
+					Text: chunk.Content,
+				},
+			},
+		}
+	}
 
-	for _, chunk := range chunks {
-		var embedding []float32
-		var err error
+	var dataItems []domain.EmbeddingDataItem
+	var err error
 
-		for attempt := 1; attempt <= maxRetries; attempt++ {
-			embedding, err = v.computeEmbeddingWithRetry(ctx, chunk.Content)
-			if err == nil {
-				break
-			}
-			if attempt == maxRetries {
-				span.RecordError(err)
-				return nil, fmt.Errorf("embedding generation failed after %d retries for chunk %s: %w", maxRetries, chunk.ID.String(), err)
-			}
-			backoff := time.Duration(100*attempt) * time.Millisecond
-			time.Sleep(backoff)
+	for attempt := 1; attempt <= DefaultMaxRetries; attempt++ {
+		if v.client != nil {
+			dataItems, err = v.client.CreateEmbeddings(ctx, v.modelVersion, inputs)
+		} else {
+			err = fmt.Errorf("openrouter client is not configured")
 		}
 
+		if err == nil && len(dataItems) == len(chunks) {
+			break
+		}
+
+		if attempt == DefaultMaxRetries {
+			span.RecordError(err)
+			return nil, fmt.Errorf("batch embedding generation failed after %d retries: %w", DefaultMaxRetries, err)
+		}
+
+		backoff := time.Duration(DefaultRetryBackoffMs*attempt) * time.Millisecond
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+		}
+	}
+
+	var vectors []domain.Vector
+	for i, item := range dataItems {
+		chunk := chunks[i]
 		vecID, err := uuid.NewV7()
 		if err != nil {
 			vecID = uuid.New()
 		}
 
+		dim := len(item.Embedding)
+		if dim == 0 {
+			dim = v.dimension
+		}
+
 		vector := domain.Vector{
 			ID:           vecID,
 			Hash:         chunk.Hash,
-			Embedding:    embedding,
+			Embedding:    item.Embedding,
 			ModelVersion: v.modelVersion,
-			Dimensions:   v.dimension,
+			Dimensions:   dim,
 			CreatedAt:    time.Now().UTC(),
 		}
 
@@ -81,13 +108,4 @@ func (v *VectorizationScheduler) GenerateBatchEmbeddings(ctx context.Context, ch
 	}
 
 	return vectors, nil
-}
-
-func (v *VectorizationScheduler) computeEmbeddingWithRetry(ctx context.Context, text string) ([]float32, error) {
-	vec := make([]float32, v.dimension)
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	for i := 0; i < v.dimension; i++ {
-		vec[i] = float32(r.NormFloat64())
-	}
-	return vec, nil
 }

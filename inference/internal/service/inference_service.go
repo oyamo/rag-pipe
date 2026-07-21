@@ -3,10 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"strings"
 	"time"
 
+	"github.com/oyamo/rag-pipe/inference/internal/client"
 	"github.com/oyamo/rag-pipe/inference/internal/domain"
 	"github.com/oyamo/rag-pipe/inference/internal/repository"
 	"go.opentelemetry.io/otel"
@@ -16,13 +16,15 @@ type InferenceService struct {
 	repo         *repository.InferenceRepository
 	dimension    int
 	modelVersion string
+	client       *client.OpenRouterClient
 }
 
-func NewInferenceService(repo *repository.InferenceRepository, dimension int, modelVersion string) *InferenceService {
+func NewInferenceService(repo *repository.InferenceRepository, dimension int, modelVersion string, openRouterClient *client.OpenRouterClient) *InferenceService {
 	return &InferenceService{
 		repo:         repo,
 		dimension:    dimension,
 		modelVersion: modelVersion,
+		client:       openRouterClient,
 	}
 }
 
@@ -37,7 +39,11 @@ func (s *InferenceService) QueryRAG(ctx context.Context, req *domain.QueryReques
 		return nil, fmt.Errorf("query text cannot be empty")
 	}
 
-	queryVec := s.generateQueryEmbedding(trimmed)
+	queryVec, err := s.generateQueryEmbedding(ctx, trimmed)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("failed to generate query embedding: %w", err)
+	}
 
 	results, err := s.repo.SearchSimilarVectors(ctx, queryVec, req.MinSimilarity, req.TopK, req.TenantID)
 	if err != nil {
@@ -55,23 +61,30 @@ func (s *InferenceService) QueryRAG(ctx context.Context, req *domain.QueryReques
 	}, nil
 }
 
-func (s *InferenceService) generateQueryEmbedding(text string) []float32 {
-	r := rand.New(rand.NewSource(int64(len(text))))
-	vec := make([]float32, s.dimension)
-	var norm float64
-
-	for i := 0; i < s.dimension; i++ {
-		val := float32(r.NormFloat64())
-		vec[i] = val
-		norm += float64(val * val)
+func (s *InferenceService) generateQueryEmbedding(ctx context.Context, text string) ([]float32, error) {
+	if s.client == nil {
+		return nil, fmt.Errorf("openrouter client is not configured")
 	}
 
-	if norm > 0 {
-		scale := float32(1.0 / (norm * norm))
-		for i := 0; i < s.dimension; i++ {
-			vec[i] *= scale
-		}
+	inputs := []domain.MultimodalInput{
+		{
+			Content: []domain.MultimodalContentItem{
+				{
+					Type: client.ContentTypeText,
+					Text: text,
+				},
+			},
+		},
 	}
 
-	return vec
+	dataItems, err := s.client.CreateEmbeddings(ctx, s.modelVersion, inputs)
+	if err != nil {
+		return nil, fmt.Errorf("openrouter embedding call failed: %w", err)
+	}
+
+	if len(dataItems) == 0 {
+		return nil, fmt.Errorf("openrouter returned no embedding data")
+	}
+
+	return dataItems[0].Embedding, nil
 }
