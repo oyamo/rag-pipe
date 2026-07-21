@@ -5,8 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 
-	"github.com/lib/pq"
 	"github.com/oyamo/rag-pipe/inference/internal/domain"
 	"go.opentelemetry.io/otel"
 )
@@ -17,6 +18,14 @@ type InferenceRepository struct {
 
 func NewInferenceRepository(db *sql.DB) *InferenceRepository {
 	return &InferenceRepository{db: db}
+}
+
+func formatVector(embedding []float32) string {
+	s := make([]string, len(embedding))
+	for i, v := range embedding {
+		s[i] = strconv.FormatFloat(float64(v), 'f', -1, 32)
+	}
+	return "[" + strings.Join(s, ",") + "]"
 }
 
 func (r *InferenceRepository) SearchSimilarVectors(ctx context.Context, queryVec []float32, minSimilarity float64, topK int, tenantID string) ([]domain.QueryResultItem, error) {
@@ -48,7 +57,7 @@ func (r *InferenceRepository) SearchSimilarVectors(ctx context.Context, queryVec
 		WHERE (1 - (v.embedding <=> $1)) >= $2
 	`
 
-	args := []interface{}{pq.Array(queryVec), minSimilarity}
+	args := []interface{}{formatVector(queryVec), minSimilarity}
 	paramIdx := 3
 
 	if tenantID != "" {
