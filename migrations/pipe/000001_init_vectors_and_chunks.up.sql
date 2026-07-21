@@ -3,7 +3,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE IF NOT EXISTS vectors (
     id UUID PRIMARY KEY,
     hash VARCHAR(64) NOT NULL UNIQUE,
-    embedding vector NOT NULL,
+    embedding vector(1536) NOT NULL,
     model_version VARCHAR(64) NOT NULL,
     dimensions INT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()

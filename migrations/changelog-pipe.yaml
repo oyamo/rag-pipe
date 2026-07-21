@@ -6,3 +6,10 @@ databaseChangeLog:
         - sqlFile:
             path: sql/02_vectors_and_chunks.sql
             relativeToChangelogFile: true
+  - changeSet:
+      id: 3-alter-vectors-embedding-dimension
+      author: oyamo
+      changes:
+        - sqlFile:
+            path: sql/03_alter_vectors_embedding_dimension.sql
+            relativeToChangelogFile: true
