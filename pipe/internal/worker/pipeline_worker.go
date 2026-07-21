@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/oyamo/rag-pipe/pipe/internal/domain"
 	"github.com/oyamo/rag-pipe/pipe/internal/nlp"
 	"github.com/oyamo/rag-pipe/pipe/internal/pipeline"
 	"github.com/oyamo/rag-pipe/pipe/internal/repository"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type PipelineWorker struct {
@@ -53,26 +55,39 @@ func (w *PipelineWorker) ProcessDocument(ctx context.Context, event *domain.Inge
 	ctx, span := tracer.Start(ctx, "PipelineWorker.ProcessDocument")
 	defer span.End()
 
-	slog.Info("starting pipeline processing for document", "document_id", event.DocumentID, "file_key", event.FileKey)
+	slog.InfoContext(ctx, "starting pipeline processing for document", "document_id", event.DocumentID, "file_key", event.FileKey)
 
-	tmpFilePath, cleanup, err := w.storage.DownloadTempFile(ctx, event.FileKey)
+	// Step 1: Download File from Storage
+	downloadCtx, downloadSpan := tracer.Start(ctx, "PipelineWorker.DownloadStorageFile")
+	t0 := time.Now()
+	tmpFilePath, cleanup, err := w.storage.DownloadTempFile(downloadCtx, event.FileKey)
+	downloadDuration := time.Since(t0).Milliseconds()
+	downloadSpan.SetAttributes(attribute.Int64("download.duration_ms", downloadDuration))
+	downloadSpan.End()
+
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("failed to download document from storage: %w", err)
 	}
 	defer cleanup()
 
+	// Step 2: Extract Text (PDF pdftotext)
+	extractCtx, extractSpan := tracer.Start(ctx, "PipelineWorker.PDFTextExtraction")
+	t0 = time.Now()
 	lineChan := make(chan pipeline.ExtractedLine, 500)
 	var extractErr error
 
 	go func() {
-		extractErr = w.extractor.ExtractTextStream(ctx, tmpFilePath, lineChan)
+		extractErr = w.extractor.ExtractTextStream(extractCtx, tmpFilePath, lineChan)
 	}()
 
 	var extractedLines []pipeline.ExtractedLine
 	for l := range lineChan {
 		extractedLines = append(extractedLines, l)
 	}
+	extractDuration := time.Since(t0).Milliseconds()
+	extractSpan.SetAttributes(attribute.Int64("extraction.duration_ms", extractDuration), attribute.Int("extraction.line_count", len(extractedLines)))
+	extractSpan.End()
 
 	if extractErr != nil {
 		span.RecordError(extractErr)
@@ -80,39 +95,56 @@ func (w *PipelineWorker) ProcessDocument(ctx context.Context, event *domain.Inge
 	}
 
 	if len(extractedLines) == 0 {
-		slog.Warn("no text extracted from document", "document_id", event.DocumentID)
+		slog.WarnContext(ctx, "no text extracted from document", "document_id", event.DocumentID)
 		return nil
 	}
 
 	normalizedLines := w.normalizer.NormalizeLines(ctx, extractedLines)
 
-	rawChunks, err := w.segmenter.SegmentDocument(ctx, event.DocumentID, normalizedLines)
+	// Step 3: Segment Document
+	segmentCtx, segmentSpan := tracer.Start(ctx, "PipelineWorker.DocumentSegmentation")
+	t0 = time.Now()
+	rawChunks, err := w.segmenter.SegmentDocument(segmentCtx, event.DocumentID, normalizedLines)
+	segmentDuration := time.Since(t0).Milliseconds()
+	segmentSpan.SetAttributes(attribute.Int64("segmentation.duration_ms", segmentDuration), attribute.Int("segmentation.chunk_count", len(rawChunks)))
+	segmentSpan.End()
+
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("segmentation error: %w", err)
 	}
 
+	// Step 4: NLP Quality & Entity Profiling
+	nlpCtx, nlpSpan := tracer.Start(ctx, "PipelineWorker.NLPProfiling")
+	t0 = time.Now()
 	var enrichedChunks []domain.Chunk
 	for i := range rawChunks {
 		chk := rawChunks[i]
-		if w.nlpPipeline.EnrichChunk(ctx, &chk) {
+		if w.nlpPipeline.EnrichChunk(nlpCtx, &chk) {
 			enrichedChunks = append(enrichedChunks, chk)
 		}
 	}
+	nlpDuration := time.Since(t0).Milliseconds()
+	nlpSpan.SetAttributes(attribute.Int64("nlp.duration_ms", nlpDuration), attribute.Int("nlp.enriched_chunks", len(enrichedChunks)))
+	nlpSpan.End()
 
 	if len(enrichedChunks) == 0 {
-		slog.Warn("all chunks filtered out by nlp quality pipeline", "document_id", event.DocumentID)
+		slog.WarnContext(ctx, "all chunks filtered out by nlp quality pipeline", "document_id", event.DocumentID)
 		return nil
 	}
 
+	// Step 5: Deduplication
+	dedupCtx, dedupSpan := tracer.Start(ctx, "PipelineWorker.ChunkDeduplication")
+	t0 = time.Now()
 	var chunksToEmbed []domain.Chunk
 	var finalChunks []domain.Chunk
 	dedupCount := 0
 
 	for i := range enrichedChunks {
 		chk := enrichedChunks[i]
-		isDuplicate, existingVecID, hash, err := w.deduplicator.DeduplicateChunk(ctx, &chk)
+		isDuplicate, existingVecID, hash, err := w.deduplicator.DeduplicateChunk(dedupCtx, &chk)
 		if err != nil {
+			dedupSpan.End()
 			span.RecordError(err)
 			return fmt.Errorf("deduplication error: %w", err)
 		}
@@ -127,10 +159,20 @@ func (w *PipelineWorker) ProcessDocument(ctx context.Context, event *domain.Inge
 			chunksToEmbed = append(chunksToEmbed, chk)
 		}
 	}
+	dedupDuration := time.Since(t0).Milliseconds()
+	dedupSpan.SetAttributes(attribute.Int64("dedup.duration_ms", dedupDuration), attribute.Int("dedup.duplicates_found", dedupCount))
+	dedupSpan.End()
 
+	// Step 6: Generate Embeddings (OpenRouter API)
 	var newVectors []domain.Vector
 	if len(chunksToEmbed) > 0 {
-		newVectors, err = w.vectorizer.GenerateBatchEmbeddings(ctx, chunksToEmbed)
+		vecCtx, vecSpan := tracer.Start(ctx, "PipelineWorker.GenerateOpenRouterEmbeddings")
+		t0 = time.Now()
+		newVectors, err = w.vectorizer.GenerateBatchEmbeddings(vecCtx, chunksToEmbed)
+		vecDuration := time.Since(t0).Milliseconds()
+		vecSpan.SetAttributes(attribute.Int64("vectorization.duration_ms", vecDuration), attribute.Int("vectorization.vectors_generated", len(newVectors)))
+		vecSpan.End()
+
 		if err != nil {
 			span.RecordError(err)
 			return fmt.Errorf("vectorization error: %w", err)
@@ -144,17 +186,30 @@ func (w *PipelineWorker) ProcessDocument(ctx context.Context, event *domain.Inge
 		}
 	}
 
-	err = w.vectorRepo.SaveBulk(ctx, newVectors, finalChunks)
+	// Step 7: Bulk DB Insertion (Postgres pgvector)
+	dbCtx, dbSpan := tracer.Start(ctx, "PipelineWorker.BulkDatabaseSave")
+	t0 = time.Now()
+	err = w.vectorRepo.SaveBulk(dbCtx, newVectors, finalChunks)
+	dbDuration := time.Since(t0).Milliseconds()
+	dbSpan.SetAttributes(attribute.Int64("db.save_duration_ms", dbDuration), attribute.Int("db.rows_saved", len(finalChunks)))
+	dbSpan.End()
+
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("bulk database save error: %w", err)
 	}
 
-	slog.Info("document pipeline processing completed successfully",
+	slog.InfoContext(ctx, "document pipeline processing completed successfully",
 		"document_id", event.DocumentID,
 		"total_chunks", len(finalChunks),
 		"deduplicated_chunks", dedupCount,
 		"new_vectors", len(newVectors),
+		"download_ms", downloadDuration,
+		"extraction_ms", extractDuration,
+		"segmentation_ms", segmentDuration,
+		"nlp_ms", nlpDuration,
+		"dedup_ms", dedupDuration,
+		"db_save_ms", dbDuration,
 	)
 
 	return nil

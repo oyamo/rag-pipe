@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
@@ -15,6 +16,7 @@ import (
 type TelemetryProvider struct {
 	TracerProvider *sdktrace.TracerProvider
 	Tracer         trace.Tracer
+	Meter          metric.Meter
 }
 
 type TracingHandler struct {
@@ -54,10 +56,12 @@ func InitTelemetry(serviceName string) (*TelemetryProvider, error) {
 
 	otel.SetTracerProvider(tp)
 	tracer := tp.Tracer(serviceName)
+	meter := otel.GetMeterProvider().Meter(serviceName)
 
 	return &TelemetryProvider{
 		TracerProvider: tp,
 		Tracer:         tracer,
+		Meter:          meter,
 	}, nil
 }
 

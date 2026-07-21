@@ -62,6 +62,16 @@ services:
     volumes:
       - lokidata:/loki
 
+  promtail:
+    image: grafana/promtail:latest
+    command: [ "-config.file=/etc/promtail/promtail.yml" ]
+    volumes:
+      - ./promtail.yml:/etc/promtail/promtail.yml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - loki
+
   grafana:
     image: grafana/grafana:latest
     environment:
@@ -72,6 +82,8 @@ services:
     volumes:
       - grafanadata:/var/lib/grafana
       - ./grafana-datasource.yaml:/etc/grafana/provisioning/datasources/datasource.yaml
+      - ./grafana-dashboard-provider.yaml:/etc/grafana/provisioning/dashboards/provider.yaml
+      - ./grafana-dashboard-rag.json:/etc/grafana/provisioning/dashboards/rag_overview.json
     depends_on:
       - tempo
       - prometheus

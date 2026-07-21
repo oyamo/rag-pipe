@@ -10,6 +10,7 @@ import (
 	"github.com/oyamo/rag-pipe/inference/internal/domain"
 	"github.com/oyamo/rag-pipe/inference/internal/repository"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 const (
@@ -49,19 +50,38 @@ func (s *InferenceService) QueryRAG(ctx context.Context, req *domain.QueryReques
 		minSimilarity = DefaultMinSimilarity
 	}
 
-	queryVec, err := s.generateQueryEmbedding(ctx, trimmed)
+	// Sub-span 1: Generate Query Embedding (OpenRouter API)
+	embCtx, embSpan := tracer.Start(ctx, "InferenceService.GenerateQueryEmbedding")
+	t0 := time.Now()
+	queryVec, err := s.generateQueryEmbedding(embCtx, trimmed)
+	embDuration := time.Since(t0).Milliseconds()
+	embSpan.SetAttributes(attribute.Int64("openrouter.embedding_duration_ms", embDuration))
+	embSpan.End()
+
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("failed to generate query embedding: %w", err)
 	}
 
-	results, err := s.repo.SearchSimilarVectors(ctx, queryVec, minSimilarity, req.TopK, req.TenantID)
+	// Sub-span 2: Search Vector Database (Postgres pgvector)
+	dbCtx, dbSpan := tracer.Start(ctx, "InferenceService.SearchSimilarVectors")
+	t0 = time.Now()
+	results, err := s.repo.SearchSimilarVectors(dbCtx, queryVec, minSimilarity, req.TopK, req.TenantID)
+	dbDuration := time.Since(t0).Milliseconds()
+	dbSpan.SetAttributes(attribute.Int64("pgvector.search_duration_ms", dbDuration), attribute.Int("pgvector.matches_found", len(results)))
+	dbSpan.End()
+
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("inference repository query error: %w", err)
 	}
 
 	latencyMs := time.Since(startTime).Milliseconds()
+	span.SetAttributes(
+		attribute.Int64("rag.total_latency_ms", latencyMs),
+		attribute.Int64("rag.embedding_latency_ms", embDuration),
+		attribute.Int64("rag.vector_search_latency_ms", dbDuration),
+	)
 
 	return &domain.QueryResponse{
 		Query:     trimmed,
