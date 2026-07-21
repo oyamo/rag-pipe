@@ -24,8 +24,8 @@ func (r *DocumentRepository) Save(ctx context.Context, doc *domain.Document) err
 	defer span.End()
 
 	query := `
-		INSERT INTO documents (id, tenant_id, name, description, file_key, file_size, content_type, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO documents (id, tenant_id, name, description, file_key, file_size, content_type, checksum, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`
 
 	_, err := r.db.ExecContext(
@@ -38,6 +38,7 @@ func (r *DocumentRepository) Save(ctx context.Context, doc *domain.Document) err
 		doc.FileKey,
 		doc.FileSize,
 		doc.ContentType,
+		doc.Checksum,
 		doc.Status,
 		doc.CreatedAt,
 		doc.UpdatedAt,
@@ -50,19 +51,69 @@ func (r *DocumentRepository) Save(ctx context.Context, doc *domain.Document) err
 	return nil
 }
 
+func (r *DocumentRepository) FindByChecksum(ctx context.Context, tenantID, checksum string) (*domain.Document, error) {
+	tracer := otel.Tracer("repository.document")
+	ctx, span := tracer.Start(ctx, "DocumentRepository.FindByChecksum")
+	defer span.End()
+
+	if checksum == "" {
+		return nil, nil
+	}
+
+	query := `
+		SELECT id, tenant_id, name, description, file_key, file_size, content_type, checksum, status, created_at, updated_at
+		FROM documents
+		WHERE checksum = $1 AND (tenant_id = $2 OR $2 = '')
+		LIMIT 1
+	`
+
+	doc := &domain.Document{}
+	var tID, cSum sql.NullString
+
+	err := r.db.QueryRowContext(ctx, query, checksum, tenantID).Scan(
+		&doc.ID,
+		&tID,
+		&doc.Name,
+		&doc.Description,
+		&doc.FileKey,
+		&doc.FileSize,
+		&doc.ContentType,
+		&cSum,
+		&doc.Status,
+		&doc.CreatedAt,
+		&doc.UpdatedAt,
+	)
+	if err != nil {
+		span.RecordError(err)
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to query document by checksum: %w", err)
+	}
+
+	if tID.Valid {
+		doc.TenantID = tID.String
+	}
+	if cSum.Valid {
+		doc.Checksum = cSum.String
+	}
+
+	return doc, nil
+}
+
 func (r *DocumentRepository) GetByID(ctx context.Context, id string) (*domain.Document, error) {
 	tracer := otel.Tracer("repository.document")
 	ctx, span := tracer.Start(ctx, "DocumentRepository.GetByID")
 	defer span.End()
 
 	query := `
-		SELECT id, tenant_id, name, description, file_key, file_size, content_type, status, created_at, updated_at
+		SELECT id, tenant_id, name, description, file_key, file_size, content_type, checksum, status, created_at, updated_at
 		FROM documents
 		WHERE id = $1
 	`
 
 	doc := &domain.Document{}
-	var tenantID sql.NullString
+	var tenantID, cSum sql.NullString
 
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&doc.ID,
@@ -72,6 +123,7 @@ func (r *DocumentRepository) GetByID(ctx context.Context, id string) (*domain.Do
 		&doc.FileKey,
 		&doc.FileSize,
 		&doc.ContentType,
+		&cSum,
 		&doc.Status,
 		&doc.CreatedAt,
 		&doc.UpdatedAt,
@@ -86,6 +138,9 @@ func (r *DocumentRepository) GetByID(ctx context.Context, id string) (*domain.Do
 
 	if tenantID.Valid {
 		doc.TenantID = tenantID.String
+	}
+	if cSum.Valid {
+		doc.Checksum = cSum.String
 	}
 
 	return doc, nil

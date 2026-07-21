@@ -14,6 +14,7 @@ type Document struct {
 	FileKey     string    `json:"file_key"`
 	FileSize    int64     `json:"file_size"`
 	ContentType string    `json:"content_type"`
+	Checksum    string    `json:"checksum,omitempty"`
 	Status      string    `json:"status"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`

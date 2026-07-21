@@ -6,3 +6,10 @@ databaseChangeLog:
         - sqlFile:
             path: sql/01_documents.sql
             relativeToChangelogFile: true
+  - changeSet:
+      id: 4-add-checksum-to-documents
+      author: oyamo
+      changes:
+        - sqlFile:
+            path: sql/04_add_checksum_to_documents.sql
+            relativeToChangelogFile: true
