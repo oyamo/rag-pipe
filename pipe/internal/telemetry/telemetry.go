@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -38,9 +39,10 @@ func (h *TracingHandler) Handle(ctx context.Context, r slog.Record) error {
 	return h.Handler.Handle(ctx, r)
 }
 
-func InitTelemetry(serviceName string) (*TelemetryProvider, error) {
+func InitTelemetry(serviceName, collectorURL string) (*TelemetryProvider, error) {
+	ctx := context.Background()
 	res, err := resource.New(
-		context.Background(),
+		ctx,
 		resource.WithAttributes(
 			semconv.ServiceNameKey.String(serviceName),
 		),
@@ -49,9 +51,19 @@ func InitTelemetry(serviceName string) (*TelemetryProvider, error) {
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
+	exporter, err := otlptracehttp.New(
+		ctx,
+		otlptracehttp.WithEndpoint(collectorURL),
+		otlptracehttp.WithInsecure(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OTLP trace exporter: %w", err)
+	}
+
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 		sdktrace.WithResource(res),
+		sdktrace.WithBatcher(exporter),
 	)
 
 	otel.SetTracerProvider(tp)

@@ -34,58 +34,30 @@ services:
       - "4222:4222"
       - "8222:8222"
 
-  tempo:
-    image: grafana/tempo:latest
-    command: [ "-config.file=/etc/tempo.yaml" ]
-    volumes:
-      - ./tempo-config.yaml:/etc/tempo.yaml
-      - tempodata:/var/tempo
-    ports:
-      - "4317:4317" # OTLP gRPC
-      - "4318:4318" # OTLP HTTP
-      - "3200:3200" # Tempo HTTP API
-
-  prometheus:
-    image: prom/prometheus:latest
-    command: [ "--config.file=/etc/prometheus/prometheus.yml" ]
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheusdata:/prometheus
-    ports:
-      - "9090:9090"
-
-  loki:
-    image: grafana/loki:latest
-    command: [ "-config.file=/etc/loki/local-config.yaml" ]
-    ports:
-      - "3100:3100"
-    volumes:
-      - lokidata:/loki
-
-  promtail:
-    image: grafana/promtail:latest
-    command: [ "-config.file=/etc/promtail/promtail.yml" ]
-    volumes:
-      - ./promtail.yml:/etc/promtail/promtail.yml
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      - loki
-
-  grafana:
-    image: grafana/grafana:latest
+  openobserve:
+    image: openobserve/openobserve:v0.10.3
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - ZO_ROOT_USER_EMAIL=${ZO_ROOT_USER_EMAIL:-root@example.com}
+      - ZO_ROOT_USER_PASSWORD=${ZO_ROOT_USER_PASSWORD:-ComplexPassword123!}
+      - ZO_DATA_DIR=/data
     ports:
-      - "3000:3000" # Grafana Web UI
+      - "5080:5080"
+      - "5081:5081"
     volumes:
-      - grafanadata:/var/lib/grafana
-      - ./grafana-datasource.yaml:/etc/grafana/provisioning/datasources/datasource.yaml
+      - zodata:/data
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.98.0
+    command: [ "--config=/etc/otelcol-contrib/config.yaml" ]
+    environment:
+      - OPENOBSERVE_AUTH_HEADER=${OPENOBSERVE_AUTH_HEADER}
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
+    ports:
+      - "4317:4317"
+      - "4318:4318"
     depends_on:
-      - tempo
-      - prometheus
-      - loki
+      - openobserve
 
   liquibase-migration:
     image: liquibase/liquibase:4.27.0
@@ -116,7 +88,7 @@ services:
       NATS_URL: ${NATS_URL}
       NATS_TOPIC: ${NATS_TOPIC}
       OTEL_SERVICE_NAME: ingestion-service
-      OTEL_COLLECTOR_URL: tempo:4318
+      OTEL_COLLECTOR_URL: otel-collector:4318
     ports:
       - "8080:8080"
     depends_on:
@@ -126,7 +98,7 @@ services:
         condition: service_started
       nats:
         condition: service_started
-      tempo:
+      otel-collector:
         condition: service_started
       liquibase-migration:
         condition: service_completed_successfully
@@ -153,7 +125,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL}
       OTEL_SERVICE_NAME: pipe-service
-      OTEL_COLLECTOR_URL: tempo:4318
+      OTEL_COLLECTOR_URL: otel-collector:4318
     ports:
       - "8082:8082"
     depends_on:
@@ -163,7 +135,7 @@ services:
         condition: service_started
       nats:
         condition: service_started
-      tempo:
+      otel-collector:
         condition: service_started
       liquibase-migration:
         condition: service_completed_successfully
@@ -178,13 +150,13 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL}
       OTEL_SERVICE_NAME: inference-service
-      OTEL_COLLECTOR_URL: tempo:4318
+      OTEL_COLLECTOR_URL: otel-collector:4318
     ports:
       - "8081:8081"
     depends_on:
       postgres:
         condition: service_healthy
-      tempo:
+      otel-collector:
         condition: service_started
       liquibase-migration:
         condition: service_completed_successfully
@@ -192,7 +164,4 @@ services:
 volumes:
   pgdata:
   miniodata:
-  tempodata:
-  prometheusdata:
-  lokidata:
-  grafanadata:
+  zodata:

@@ -30,7 +30,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	telProvider, err := telemetry.InitTelemetry(cfg.OTelServiceName)
+	telProvider, err := telemetry.InitTelemetry(cfg.OTelServiceName, cfg.OTelCollectorURL)
 	if err != nil {
 		slog.Error("failed to initialize telemetry", "error", err)
 		os.Exit(1)
