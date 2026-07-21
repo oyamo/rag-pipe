@@ -18,6 +18,8 @@ type QueryRequest struct {
 type QueryResultItem struct {
 	ChunkID      uuid.UUID       `json:"chunk_id"`
 	DocumentID   uuid.UUID       `json:"document_id"`
+	DocumentName string          `json:"document_name,omitempty"`
+	FileKey      string          `json:"file_key,omitempty"`
 	VectorID     uuid.UUID       `json:"vector_id"`
 	Index        int             `json:"index"`
 	Content      string          `json:"content"`
@@ -28,8 +30,8 @@ type QueryResultItem struct {
 }
 
 type QueryResponse struct {
-	Query      string            `json:"query"`
-	Total      int               `json:"total"`
-	LatencyMs  int64             `json:"latency_ms"`
-	Results    []QueryResultItem `json:"results"`
+	Query     string            `json:"query"`
+	Total     int               `json:"total"`
+	LatencyMs int64             `json:"latency_ms"`
+	Results   []QueryResultItem `json:"results"`
 }

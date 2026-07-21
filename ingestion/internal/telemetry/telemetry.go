@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -14,6 +15,25 @@ import (
 type TelemetryProvider struct {
 	TracerProvider *sdktrace.TracerProvider
 	Tracer         trace.Tracer
+}
+
+type TracingHandler struct {
+	slog.Handler
+}
+
+func NewTracingHandler(h slog.Handler) slog.Handler {
+	return &TracingHandler{Handler: h}
+}
+
+func (h *TracingHandler) Handle(ctx context.Context, r slog.Record) error {
+	if span := trace.SpanFromContext(ctx); span.SpanContext().IsValid() {
+		sc := span.SpanContext()
+		r.AddAttrs(
+			slog.String("trace_id", sc.TraceID().String()),
+			slog.String("span_id", sc.SpanID().String()),
+		)
+	}
+	return h.Handler.Handle(ctx, r)
 }
 
 func InitTelemetry(serviceName string) (*TelemetryProvider, error) {

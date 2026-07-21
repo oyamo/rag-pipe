@@ -22,7 +22,8 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	jsonHandler := slog.NewJSONHandler(os.Stdout, nil)
+	logger := slog.New(telemetry.NewTracingHandler(jsonHandler))
 	slog.SetDefault(logger)
 
 	cfg, err := config.LoadConfig()

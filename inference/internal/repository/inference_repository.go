@@ -45,6 +45,8 @@ func (r *InferenceRepository) SearchSimilarVectors(ctx context.Context, queryVec
 		SELECT 
 			c.id, 
 			c.document_id, 
+			COALESCE(d.name, '') AS document_name,
+			COALESCE(d.file_key, '') AS file_key,
 			c.vector_id, 
 			c.chunk_index, 
 			c.content, 
@@ -54,6 +56,7 @@ func (r *InferenceRepository) SearchSimilarVectors(ctx context.Context, queryVec
 			(1 - (v.embedding <=> $1)) AS similarity
 		FROM chunks c
 		JOIN vectors v ON c.vector_id = v.id
+		LEFT JOIN documents d ON c.document_id = d.id
 		WHERE (1 - (v.embedding <=> $1)) >= $2
 	`
 
@@ -61,7 +64,7 @@ func (r *InferenceRepository) SearchSimilarVectors(ctx context.Context, queryVec
 	paramIdx := 3
 
 	if tenantID != "" {
-		query += fmt.Sprintf(" AND c.metadata->>'tenant_id' = $%d", paramIdx)
+		query += fmt.Sprintf(" AND (c.metadata->>'tenant_id' = $%d OR d.tenant_id = $%d)", paramIdx, paramIdx)
 		args = append(args, tenantID)
 		paramIdx++
 	}
@@ -85,6 +88,8 @@ func (r *InferenceRepository) SearchSimilarVectors(ctx context.Context, queryVec
 		err := rows.Scan(
 			&item.ChunkID,
 			&item.DocumentID,
+			&item.DocumentName,
+			&item.FileKey,
 			&item.VectorID,
 			&item.Index,
 			&item.Content,

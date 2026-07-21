@@ -34,13 +34,29 @@ services:
       - "4222:4222"
       - "8222:8222"
 
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.98.0
-    command: [ "--config=/etc/otelcol-contrib/config.yaml" ]
+  tempo:
+    image: grafana/tempo:latest
+    command: [ "-config.file=/etc/tempo.yaml" ]
+    volumes:
+      - ./tempo-config.yaml:/etc/tempo.yaml
+      - tempodata:/var/tempo
     ports:
-      - "4317:4317"
-      - "4318:4318"
-      - "8888:8888"
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+      - "3200:3200" # Tempo HTTP API
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    ports:
+      - "3000:3000" # Grafana Web UI
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./grafana-datasource.yaml:/etc/grafana/provisioning/datasources/datasource.yaml
+    depends_on:
+      - tempo
 
   liquibase-migration:
     image: liquibase/liquibase:4.27.0
@@ -71,7 +87,7 @@ services:
       NATS_URL: ${NATS_URL}
       NATS_TOPIC: ${NATS_TOPIC}
       OTEL_SERVICE_NAME: ingestion-service
-      OTEL_COLLECTOR_URL: ${OTEL_COLLECTOR_URL}
+      OTEL_COLLECTOR_URL: tempo:4318
     ports:
       - "8080:8080"
     depends_on:
@@ -80,6 +96,8 @@ services:
       minio:
         condition: service_started
       nats:
+        condition: service_started
+      tempo:
         condition: service_started
       liquibase-migration:
         condition: service_completed_successfully
@@ -106,6 +124,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL}
       OTEL_SERVICE_NAME: pipe-service
+      OTEL_COLLECTOR_URL: tempo:4318
     ports:
       - "8082:8082"
     depends_on:
@@ -114,6 +133,8 @@ services:
       minio:
         condition: service_started
       nats:
+        condition: service_started
+      tempo:
         condition: service_started
       liquibase-migration:
         condition: service_completed_successfully
@@ -128,15 +149,19 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL}
       OTEL_SERVICE_NAME: inference-service
-      OTEL_COLLECTOR_URL: ${OTEL_COLLECTOR_URL}
+      OTEL_COLLECTOR_URL: tempo:4318
     ports:
       - "8081:8081"
     depends_on:
       postgres:
         condition: service_healthy
+      tempo:
+        condition: service_started
       liquibase-migration:
         condition: service_completed_successfully
 
 volumes:
   pgdata:
   miniodata:
+  tempodata:
+  grafanadata:

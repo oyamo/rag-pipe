@@ -12,6 +12,11 @@ import (
 	"go.opentelemetry.io/otel"
 )
 
+const (
+	DefaultMinSimilarity = 0.18
+	QueryPrefix          = "search_query: "
+)
+
 type InferenceService struct {
 	repo         *repository.InferenceRepository
 	dimension    int
@@ -39,13 +44,18 @@ func (s *InferenceService) QueryRAG(ctx context.Context, req *domain.QueryReques
 		return nil, fmt.Errorf("query text cannot be empty")
 	}
 
+	minSimilarity := req.MinSimilarity
+	if minSimilarity <= 0.0 {
+		minSimilarity = DefaultMinSimilarity
+	}
+
 	queryVec, err := s.generateQueryEmbedding(ctx, trimmed)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("failed to generate query embedding: %w", err)
 	}
 
-	results, err := s.repo.SearchSimilarVectors(ctx, queryVec, req.MinSimilarity, req.TopK, req.TenantID)
+	results, err := s.repo.SearchSimilarVectors(ctx, queryVec, minSimilarity, req.TopK, req.TenantID)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("inference repository query error: %w", err)
@@ -66,12 +76,17 @@ func (s *InferenceService) generateQueryEmbedding(ctx context.Context, text stri
 		return nil, fmt.Errorf("openrouter client is not configured")
 	}
 
+	queryInputText := text
+	if !strings.HasPrefix(strings.ToLower(text), "search_query:") {
+		queryInputText = QueryPrefix + text
+	}
+
 	inputs := []domain.MultimodalInput{
 		{
 			Content: []domain.MultimodalContentItem{
 				{
 					Type: client.ContentTypeText,
-					Text: text,
+					Text: queryInputText,
 				},
 			},
 		},

@@ -3,28 +3,71 @@ package telemetry
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
-func InitTelemetry(serviceName string) (*sdktrace.TracerProvider, error) {
-	res, err := resource.New(context.Background(),
+type TelemetryProvider struct {
+	TracerProvider *sdktrace.TracerProvider
+	Tracer         trace.Tracer
+}
+
+type TracingHandler struct {
+	slog.Handler
+}
+
+func NewTracingHandler(h slog.Handler) slog.Handler {
+	return &TracingHandler{Handler: h}
+}
+
+func (h *TracingHandler) Handle(ctx context.Context, r slog.Record) error {
+	if span := trace.SpanFromContext(ctx); span.SpanContext().IsValid() {
+		sc := span.SpanContext()
+		r.AddAttrs(
+			slog.String("trace_id", sc.TraceID().String()),
+			slog.String("span_id", sc.SpanID().String()),
+		)
+	}
+	return h.Handler.Handle(ctx, r)
+}
+
+func InitTelemetry(serviceName string) (*TelemetryProvider, error) {
+	res, err := resource.New(
+		context.Background(),
 		resource.WithAttributes(
 			semconv.ServiceNameKey.String(serviceName),
 		),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create otel resource: %w", err)
+		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
 	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithResource(res),
 	)
 
 	otel.SetTracerProvider(tp)
-	return tp, nil
+	tracer := tp.Tracer(serviceName)
+
+	return &TelemetryProvider{
+		TracerProvider: tp,
+		Tracer:         tracer,
+	}, nil
+}
+
+func (t *TelemetryProvider) Shutdown(ctx context.Context) error {
+	if t.TracerProvider == nil {
+		return nil
+	}
+	err := t.TracerProvider.Shutdown(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to shutdown tracer provider: %w", err)
+	}
+	return nil
 }
