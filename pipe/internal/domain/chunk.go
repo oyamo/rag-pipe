@@ -15,6 +15,8 @@ type IngestionEvent struct {
 	FileSize    int64     `json:"file_size"`
 	ContentType string    `json:"content_type"`
 	Timestamp   time.Time `json:"timestamp"`
+	TraceParent string    `json:"traceparent,omitempty"`
+	TraceState  string    `json:"tracestate,omitempty"`
 }
 
 type ChunkMetadata struct {

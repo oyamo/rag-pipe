@@ -7,6 +7,7 @@ import (
 
 	"github.com/oyamo/rag-pipe/ingestion/internal/service"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 type DocumentHandler struct {
@@ -22,8 +23,9 @@ func (h *DocumentHandler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 func (h *DocumentHandler) UploadDocument(w http.ResponseWriter, r *http.Request) {
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 	tracer := otel.Tracer("handler.document")
-	ctx, span := tracer.Start(r.Context(), "DocumentHandler.UploadDocument")
+	ctx, span := tracer.Start(ctx, "DocumentHandler.UploadDocument")
 	defer span.End()
 
 	err := r.ParseMultipartForm(32 << 20)

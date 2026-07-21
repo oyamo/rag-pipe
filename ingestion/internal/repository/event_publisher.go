@@ -8,6 +8,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/oyamo/rag-pipe/ingestion/internal/domain"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 type natsHeaderCarrier struct {
@@ -59,13 +60,18 @@ func (p *EventPublisher) PublishDocumentCreated(ctx context.Context, event *doma
 	ctx, span := tracer.Start(ctx, "EventPublisher.PublishDocumentCreated")
 	defer span.End()
 
+	mapCarrier := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, mapCarrier)
+	event.TraceParent = mapCarrier["traceparent"]
+	event.TraceState = mapCarrier["tracestate"]
+
 	data, err := json.Marshal(event)
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
 
-	headers := nats.Header{}
+	headers := make(nats.Header)
 	carrier := &natsHeaderCarrier{header: headers}
 	otel.GetTextMapPropagator().Inject(ctx, carrier)
 

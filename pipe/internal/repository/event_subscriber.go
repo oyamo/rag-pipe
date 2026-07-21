@@ -10,6 +10,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/oyamo/rag-pipe/pipe/internal/domain"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 type natsHeaderCarrier struct {
@@ -104,8 +105,20 @@ func (s *EventSubscriber) Subscribe(subjectName, consumerGroup string, handlerFu
 
 func (s *EventSubscriber) workerLoop(handlerFunc func(ctx context.Context, event *domain.IngestionEvent) error) {
 	for msg := range s.msgChan {
-		carrier := &natsHeaderCarrier{header: msg.Header}
-		ctx := otel.GetTextMapPropagator().Extract(context.Background(), carrier)
+		var event domain.IngestionEvent
+		unmarshalErr := json.Unmarshal(msg.Data, &event)
+
+		ctx := context.Background()
+		if event.TraceParent != "" {
+			mapCarrier := propagation.MapCarrier{
+				"traceparent": event.TraceParent,
+				"tracestate":  event.TraceState,
+			}
+			ctx = otel.GetTextMapPropagator().Extract(ctx, mapCarrier)
+		} else if msg.Header != nil {
+			carrier := &natsHeaderCarrier{header: msg.Header}
+			ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
+		}
 
 		tracer := otel.Tracer("repository.subscriber")
 		ctx, span := tracer.Start(ctx, "EventSubscriber.WorkerProcess")
@@ -116,8 +129,6 @@ func (s *EventSubscriber) workerLoop(handlerFunc func(ctx context.Context, event
 			numDelivered = meta.NumDelivered
 		}
 
-		var event domain.IngestionEvent
-		unmarshalErr := json.Unmarshal(msg.Data, &event)
 		if unmarshalErr != nil {
 			span.RecordError(unmarshalErr)
 			slog.Error("failed to unmarshal ingestion event", "error", unmarshalErr, "attempt", numDelivered)
