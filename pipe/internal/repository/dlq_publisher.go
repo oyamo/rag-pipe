@@ -24,7 +24,7 @@ func NewDLQPublisher(js nats.JetStreamContext, dlqSubject string) *DLQPublisher 
 
 func (p *DLQPublisher) PublishDLQ(ctx context.Context, msg *domain.DLQMessage) error {
 	tracer := otel.Tracer("repository.dlq")
-	_, span := tracer.Start(ctx, "DLQPublisher.PublishDLQ")
+	ctx, span := tracer.Start(ctx, "DLQPublisher.PublishDLQ")
 	defer span.End()
 
 	data, err := json.Marshal(msg)
@@ -33,7 +33,17 @@ func (p *DLQPublisher) PublishDLQ(ctx context.Context, msg *domain.DLQMessage) e
 		return fmt.Errorf("failed to marshal dlq message: %w", err)
 	}
 
-	_, err = p.js.Publish(p.dlqSubject, data)
+	headers := nats.Header{}
+	carrier := &natsHeaderCarrier{header: headers}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+
+	natsMsg := &nats.Msg{
+		Subject: p.dlqSubject,
+		Data:    data,
+		Header:  headers,
+	}
+
+	_, err = p.js.PublishMsg(natsMsg)
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("failed to publish to dlq subject %s: %w", p.dlqSubject, err)

@@ -10,6 +10,33 @@ import (
 	"go.opentelemetry.io/otel"
 )
 
+type natsHeaderCarrier struct {
+	header nats.Header
+}
+
+func (c *natsHeaderCarrier) Get(key string) string {
+	values := c.header[key]
+	if len(values) > 0 {
+		return values[0]
+	}
+	return ""
+}
+
+func (c *natsHeaderCarrier) Set(key string, value string) {
+	if c.header == nil {
+		c.header = make(nats.Header)
+	}
+	c.header[key] = []string{value}
+}
+
+func (c *natsHeaderCarrier) Keys() []string {
+	keys := make([]string, 0, len(c.header))
+	for k := range c.header {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 type EventPublisher struct {
 	conn  *nats.Conn
 	topic string
@@ -29,7 +56,7 @@ func NewEventPublisher(natsURL, topic string) (*EventPublisher, error) {
 
 func (p *EventPublisher) PublishDocumentCreated(ctx context.Context, event *domain.DocumentCreatedEvent) error {
 	tracer := otel.Tracer("repository.publisher")
-	_, span := tracer.Start(ctx, "EventPublisher.PublishDocumentCreated")
+	ctx, span := tracer.Start(ctx, "EventPublisher.PublishDocumentCreated")
 	defer span.End()
 
 	data, err := json.Marshal(event)
@@ -38,7 +65,17 @@ func (p *EventPublisher) PublishDocumentCreated(ctx context.Context, event *doma
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
 
-	err = p.conn.Publish(p.topic, data)
+	headers := nats.Header{}
+	carrier := &natsHeaderCarrier{header: headers}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+
+	msg := &nats.Msg{
+		Subject: p.topic,
+		Data:    data,
+		Header:  headers,
+	}
+
+	err = p.conn.PublishMsg(msg)
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("failed to publish nats message: %w", err)

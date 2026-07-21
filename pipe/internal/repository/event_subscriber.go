@@ -12,6 +12,33 @@ import (
 	"go.opentelemetry.io/otel"
 )
 
+type natsHeaderCarrier struct {
+	header nats.Header
+}
+
+func (c *natsHeaderCarrier) Get(key string) string {
+	values := c.header[key]
+	if len(values) > 0 {
+		return values[0]
+	}
+	return ""
+}
+
+func (c *natsHeaderCarrier) Set(key string, value string) {
+	if c.header == nil {
+		c.header = make(nats.Header)
+	}
+	c.header[key] = []string{value}
+}
+
+func (c *natsHeaderCarrier) Keys() []string {
+	keys := make([]string, 0, len(c.header))
+	for k := range c.header {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 type EventSubscriber struct {
 	conn              nats.JetStreamContext
 	sub               *nats.Subscription
@@ -77,8 +104,11 @@ func (s *EventSubscriber) Subscribe(subjectName, consumerGroup string, handlerFu
 
 func (s *EventSubscriber) workerLoop(handlerFunc func(ctx context.Context, event *domain.IngestionEvent) error) {
 	for msg := range s.msgChan {
+		carrier := &natsHeaderCarrier{header: msg.Header}
+		ctx := otel.GetTextMapPropagator().Extract(context.Background(), carrier)
+
 		tracer := otel.Tracer("repository.subscriber")
-		ctx, span := tracer.Start(context.Background(), "EventSubscriber.WorkerProcess")
+		ctx, span := tracer.Start(ctx, "EventSubscriber.WorkerProcess")
 
 		meta, metaErr := msg.Metadata()
 		var numDelivered uint64 = 1
