@@ -17,6 +17,15 @@ type natsHeaderCarrier struct {
 	header nats.Header
 }
 
+type EventSubscriber struct {
+	conn              nats.JetStreamContext
+	sub               *nats.Subscription
+	dlqPublisher      *DLQPublisher
+	maxDeliveries     uint64
+	workerConcurrency int
+	msgChan           chan *nats.Msg
+}
+
 func (c *natsHeaderCarrier) Get(key string) string {
 	values := c.header[key]
 	if len(values) > 0 {
@@ -40,14 +49,7 @@ func (c *natsHeaderCarrier) Keys() []string {
 	return keys
 }
 
-type EventSubscriber struct {
-	conn              nats.JetStreamContext
-	sub               *nats.Subscription
-	dlqPublisher      *DLQPublisher
-	maxDeliveries     uint64
-	workerConcurrency int
-	msgChan           chan *nats.Msg
-}
+
 
 func NewEventSubscriber(natsURL, streamName, subjectName, consumerGroup string, dlqPublisher *DLQPublisher, maxDeliveries uint64, workerConcurrency int) (*EventSubscriber, error) {
 	if workerConcurrency <= 0 {

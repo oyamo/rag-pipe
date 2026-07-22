@@ -26,7 +26,18 @@ type LanguageProfiler struct {
 
 func NewLanguageProfiler() *LanguageProfiler {
 	detector := lingua.NewLanguageDetectorBuilder().
-		FromAllLanguages().
+		FromLanguages(
+			lingua.English,
+			lingua.Spanish,
+			lingua.French,
+			lingua.German,
+			lingua.Chinese,
+			lingua.Japanese,
+			lingua.Arabic,
+			lingua.Portuguese,
+			lingua.Russian,
+			lingua.Swahili,
+		).
 		Build()
 
 	return &LanguageProfiler{
