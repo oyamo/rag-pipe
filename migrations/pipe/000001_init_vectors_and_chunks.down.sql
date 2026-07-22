@@ -1,2 +1,0 @@
-DROP TABLE IF EXISTS chunks;
-DROP TABLE IF EXISTS vectors;
