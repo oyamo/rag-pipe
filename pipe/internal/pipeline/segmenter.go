@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +34,7 @@ type DocumentSegmenter struct {
 	overlapTokens     int
 	strategy          ChunkStrategy
 	tke               *tiktoken.Tiktoken
+	tkeOnce           sync.Once
 }
 
 func NewDocumentSegmenter(targetTokenBudget, overlapTokens int, strategy string) *DocumentSegmenter {
@@ -50,22 +52,29 @@ func NewDocumentSegmenter(targetTokenBudget, overlapTokens int, strategy string)
 		strat = StrategyParagraph
 	}
 
-	tke, err := tiktoken.GetEncoding("cl100k_base")
-	if err != nil {
-		slog.Warn("tiktoken encoder fallback to word approximation", "error", err)
-	}
-
 	return &DocumentSegmenter{
 		targetTokenBudget: targetTokenBudget,
 		overlapTokens:     overlapTokens,
 		strategy:          strat,
-		tke:               tke,
 	}
 }
 
+func (s *DocumentSegmenter) getEncoder() *tiktoken.Tiktoken {
+	s.tkeOnce.Do(func() {
+		tke, err := tiktoken.GetEncoding("cl100k_base")
+		if err != nil {
+			slog.Warn("tiktoken encoder initialization failed (offline or network error), falling back to word approximation", "error", err)
+			return
+		}
+		s.tke = tke
+	})
+	return s.tke
+}
+
 func (s *DocumentSegmenter) CountTokens(text string) int {
-	if s.tke != nil {
-		return len(s.tke.Encode(text, nil, nil))
+	tke := s.getEncoder()
+	if tke != nil {
+		return len(tke.Encode(text, nil, nil))
 	}
 	return int(float64(len(strings.Fields(text))) * 1.3)
 }
@@ -118,18 +127,19 @@ func (s *DocumentSegmenter) segmentExactTokens(docUUID uuid.UUID, docID string, 
 		return nil, nil
 	}
 
-	if s.tke == nil {
+	tke := s.getEncoder()
+	if tke == nil {
 		return s.segmentUnits(docUUID, docID, s.extractParagraphs(lines), "tiktoken-paragraph-1.0")
 	}
 
-	tokens := s.tke.Encode(fullText, nil, nil)
+	tokens := tke.Encode(fullText, nil, nil)
 	step := s.calcStep(s.targetTokenBudget, s.overlapTokens)
 	var chunks []domain.Chunk
 
 	for i, idx := 0, 0; i < len(tokens); i += step {
 		end := min(i+s.targetTokenBudget, len(tokens))
 		chunkTokens := tokens[i:end]
-		chunkText := s.tke.Decode(chunkTokens)
+		chunkText := tke.Decode(chunkTokens)
 
 		chunks = append(chunks, s.buildChunk(docUUID, docID, idx, chunkText, lines[0].PageNumber, lines[len(lines)-1].PageNumber, len(chunkTokens), 0, 0, "tiktoken-exact-1.0"))
 		idx++

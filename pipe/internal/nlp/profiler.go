@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/pemistahl/lingua-go"
+	"github.com/abadojack/whatlanggo"
 	"go.opentelemetry.io/otel"
 )
 
@@ -20,21 +20,10 @@ type DocumentProfile struct {
 	TokenCount       int     `json:"token_count"`
 }
 
-type LanguageProfiler struct {
-	detector lingua.LanguageDetector
-}
+type LanguageProfiler struct{}
 
 func NewLanguageProfiler() *LanguageProfiler {
-	detector := lingua.NewLanguageDetectorBuilder().
-		FromLanguages(
-			lingua.English,
-			lingua.Swahili,
-		).
-		Build()
-
-	return &LanguageProfiler{
-		detector: detector,
-	}
+	return &LanguageProfiler{}
 }
 
 func (p *LanguageProfiler) ProfileDocument(ctx context.Context, text string) *DocumentProfile {
@@ -49,13 +38,12 @@ func (p *LanguageProfiler) ProfileDocument(ctx context.Context, text string) *Do
 		}
 	}
 
-	langStr := "en"
-	confidence := 0.0
-	detectedLang, exists := p.detector.DetectLanguageOf(trimmed)
-	if exists {
-		langStr = strings.ToLower(detectedLang.IsoCode639_1().String())
-		confidence = p.detector.ComputeLanguageConfidence(trimmed, detectedLang)
+	info := whatlanggo.Detect(trimmed)
+	langStr := strings.ToLower(info.Lang.Iso6391())
+	if langStr == "" {
+		langStr = "en"
 	}
+	confidence := info.Confidence
 
 	words := strings.Fields(trimmed)
 	tokenCount := int(float64(len(words)) * 1.3)
