@@ -71,7 +71,7 @@ func main() {
 	extractor := pipeline.NewPopplerExtractor()
 	normalizer := pipeline.NewTextNormalizer()
 	qualityFilter := pipeline.NewQualityFilter()
-	segmenter := pipeline.NewDocumentSegmenter(450, 80)
+	segmenter := pipeline.NewDocumentSegmenter(450, 80, cfg.ChunkStrategy)
 	deduplicator := pipeline.NewChunkDeduplicator(vectorRepo, 10000)
 	openRouterClient := pipeline.NewOpenRouterClient(cfg.OpenRouterAPIKey, cfg.OpenRouterBaseURL)
 	vectorizer := pipeline.NewVectorizationScheduler(cfg.EmbeddingDimension, cfg.EmbeddingModelVersion, openRouterClient)

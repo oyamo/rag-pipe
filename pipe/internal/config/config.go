@@ -25,6 +25,7 @@ type Config struct {
 	WorkerConcurrency     int
 	EmbeddingDimension    int
 	EmbeddingModelVersion string
+	ChunkStrategy         string
 	OpenRouterAPIKey      string
 	OpenRouterBaseURL     string
 	OTelServiceName       string
@@ -173,6 +174,8 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	chunkStrategy := getOptionalEnv("CHUNK_STRATEGY", "paragraph")
+
 	openRouterAPIKey, _ := getRequiredEnv("OPENROUTER_API_KEY")
 	openRouterBaseURL := getOptionalEnv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/embeddings")
 
@@ -203,6 +206,7 @@ func LoadConfig() (*Config, error) {
 		WorkerConcurrency:     workerConcurrency,
 		EmbeddingDimension:    embeddingDimension,
 		EmbeddingModelVersion: embeddingModelVersion,
+		ChunkStrategy:         chunkStrategy,
 		OpenRouterAPIKey:      openRouterAPIKey,
 		OpenRouterBaseURL:     openRouterBaseURL,
 		OTelServiceName:       otelServiceName,

@@ -23,6 +23,8 @@ RAG-Pipe is an enterprise-grade document processing and AI search engine designe
 
 ## Key Product Capabilities
 
+* **Automatic Multi-Language Detection & Processing**: Supports global document processing with automatic natural language identification (75+ languages via Lingua), ISO language metadata tagging, and multilingual vector search capabilities out of the box.
+* **Intelligent Token-Aware Document Chunking**: Supports exact token slicing, paragraph-aware, sentence-aware, and character-based window strategies powered by `tiktoken` for maximum AI search accuracy and context quality.
 * **Concurrent Multi-Document Processing**: Built to process several documents simultaneously in parallel, scaling worker channels dynamically to handle heavy concurrent workloads without queue lockups.
 * **Dramatically Lowers AI & Cloud Costs**: Intelligently identifies duplicate document uploads before processing. Eliminates repetitive file storage, background processing, and expensive AI API fees.
 * **Handles Massive Upload Volumes Without Slowing Down**: Separates file uploads from background processing, allowing your system to stay fast and responsive even when uploading thousands of heavy documents at once.
