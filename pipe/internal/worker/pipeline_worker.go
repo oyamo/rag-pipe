@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/oyamo/rag-pipe/pipe/internal/domain"
@@ -119,37 +120,29 @@ func (w *PipelineWorker) ProcessDocument(ctx context.Context, event *domain.Inge
 		return nil
 	}
 
-	nlpCtx, nlpSpan := tracer.Start(ctx, "PipelineWorker.NLPProfilingParallel")
-	t0 = time.Now()
-	enrichedChunks := w.nlpPipeline.EnrichChunksParallel(nlpCtx, rawChunks)
-	nlpDuration := time.Since(t0).Milliseconds()
-	nlpSpan.SetAttributes(attribute.Int64("nlp.duration_ms", nlpDuration), attribute.Int("nlp.enriched_chunks", len(enrichedChunks)))
-	nlpSpan.End()
-
-	if len(enrichedChunks) == 0 {
-		slog.WarnContext(ctx, "all chunks filtered out by nlp quality pipeline", "document_id", event.DocumentID)
-		return nil
-	}
-
+	// Deduplicate raw chunks via Redis batch MGET in 1 roundtrip (< 1ms)
 	dedupCtx, dedupSpan := tracer.Start(ctx, "PipelineWorker.ChunkDeduplication")
 	t0 = time.Now()
+
+	chunkPtrs := make([]*domain.Chunk, len(rawChunks))
+	for i := range rawChunks {
+		chunkPtrs[i] = &rawChunks[i]
+	}
+
+	dedupMap, err := w.deduplicator.DeduplicateChunkBatch(dedupCtx, chunkPtrs)
+	if err != nil {
+		dedupSpan.End()
+		span.RecordError(err)
+		return fmt.Errorf("deduplication batch error: %w", err)
+	}
+
 	var chunksToEmbed []domain.Chunk
 	var finalChunks []domain.Chunk
 	dedupCount := 0
 
-	for i := range enrichedChunks {
-		chk := enrichedChunks[i]
-		isDuplicate, existingVecID, hash, err := w.deduplicator.DeduplicateChunk(dedupCtx, &chk)
-		if err != nil {
-			dedupSpan.End()
-			span.RecordError(err)
-			return fmt.Errorf("deduplication error: %w", err)
-		}
-
-		chk.Hash = hash
-
-		if isDuplicate {
-			chk.VectorID = existingVecID
+	for _, chk := range rawChunks {
+		if vectorID, isDuplicate := dedupMap[chk.Hash]; isDuplicate {
+			chk.VectorID = vectorID
 			finalChunks = append(finalChunks, chk)
 			dedupCount++
 		} else {
@@ -160,25 +153,54 @@ func (w *PipelineWorker) ProcessDocument(ctx context.Context, event *domain.Inge
 	dedupSpan.SetAttributes(attribute.Int64("dedup.duration_ms", dedupDuration), attribute.Int("dedup.duplicates_found", dedupCount))
 	dedupSpan.End()
 
-	var newVectors []domain.Vector
+	var (
+		enrichedChunks []domain.Chunk
+		newVectors     []domain.Vector
+		vecErr         error
+		nlpDuration    int64
+		vecDuration    int64
+		wg             sync.WaitGroup
+	)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		nlpCtx, nlpSpan := tracer.Start(ctx, "PipelineWorker.NLPProfilingParallel")
+		tNLP := time.Now()
+		enrichedChunks = w.nlpPipeline.EnrichChunksParallel(nlpCtx, chunksToEmbed)
+		nlpDuration = time.Since(tNLP).Milliseconds()
+		nlpSpan.SetAttributes(attribute.Int64("nlp.duration_ms", nlpDuration), attribute.Int("nlp.enriched_chunks", len(enrichedChunks)))
+		nlpSpan.End()
+	}()
+
 	if len(chunksToEmbed) > 0 {
-		vecCtx, vecSpan := tracer.Start(ctx, "PipelineWorker.GenerateOpenRouterEmbeddingsParallel")
-		t0 = time.Now()
-		newVectors, err = w.vectorizer.GenerateBatchEmbeddings(vecCtx, chunksToEmbed)
-		vecDuration := time.Since(t0).Milliseconds()
-		vecSpan.SetAttributes(attribute.Int64("vectorization.duration_ms", vecDuration), attribute.Int("vectorization.vectors_generated", len(newVectors)))
-		vecSpan.End()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			vecCtx, vecSpan := tracer.Start(ctx, "PipelineWorker.GenerateOpenRouterEmbeddingsParallel")
+			tVec := time.Now()
+			newVectors, vecErr = w.vectorizer.GenerateBatchEmbeddings(vecCtx, chunksToEmbed)
+			vecDuration = time.Since(tVec).Milliseconds()
+			vecSpan.SetAttributes(attribute.Int64("vectorization.duration_ms", vecDuration), attribute.Int("vectorization.vectors_generated", len(newVectors)))
+			vecSpan.End()
+		}()
+	}
 
-		if err != nil {
-			span.RecordError(err)
-			return fmt.Errorf("vectorization error: %w", err)
-		}
+	wg.Wait()
 
-		for i := range chunksToEmbed {
-			chunksToEmbed[i].VectorID = newVectors[i].ID
-			w.deduplicator.RegisterVectorHash(chunksToEmbed[i].Hash, newVectors[i].ID)
-			w.nlpPipeline.RegisterChunkVector(chunksToEmbed[i].Content, newVectors[i].ID)
-			finalChunks = append(finalChunks, chunksToEmbed[i])
+	if vecErr != nil {
+		span.RecordError(vecErr)
+		return fmt.Errorf("vectorization error: %w", vecErr)
+	}
+
+	if len(enrichedChunks) > 0 {
+		for i := range enrichedChunks {
+			if i < len(newVectors) {
+				enrichedChunks[i].VectorID = newVectors[i].ID
+				w.deduplicator.RegisterVectorHash(enrichedChunks[i].Hash, newVectors[i].ID)
+				w.nlpPipeline.RegisterChunkVector(enrichedChunks[i].Content, newVectors[i].ID)
+			}
+			finalChunks = append(finalChunks, enrichedChunks[i])
 		}
 	}
 

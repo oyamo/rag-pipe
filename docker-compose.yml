@@ -103,6 +103,19 @@ services:
       liquibase-migration:
         condition: service_completed_successfully
 
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 64mb --maxmemory-policy volatile-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: [ "CMD-SHELL", "redis-cli ping | grep PONG" ]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
   pipe:
     image: ghcr.io/oyamo/pipe:v0.1
     environment:
@@ -124,12 +137,18 @@ services:
       EMBEDDING_MODEL_VERSION: ${EMBEDDING_MODEL_VERSION}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL}
+      REDIS_URL: ${REDIS_URL:-redis:6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+      CACHE_WARMUP_LIMIT: ${CACHE_WARMUP_LIMIT:-10000}
       OTEL_SERVICE_NAME: pipe-service
       OTEL_COLLECTOR_URL: otel-collector:4318
     ports:
       - "8082:8082"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       minio:
         condition: service_started
@@ -165,3 +184,4 @@ volumes:
   pgdata:
   miniodata:
   zodata:
+  redisdata:

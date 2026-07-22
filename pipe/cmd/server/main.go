@@ -68,11 +68,23 @@ func main() {
 
 	vectorRepo := repository.NewVectorRepository(db)
 
+	redisRepo, err := repository.NewRedisRepository(cfg.RedisURL, cfg.RedisPassword, cfg.RedisDB)
+	if err != nil {
+		slog.Warn("failed to initialize redis repository, continuing with L1 RAM and L3 Postgres", "error", err)
+	}
+
 	extractor := pipeline.NewPopplerExtractor()
 	normalizer := pipeline.NewTextNormalizer()
 	qualityFilter := pipeline.NewQualityFilter()
 	segmenter := pipeline.NewDocumentSegmenter(450, 80, cfg.ChunkStrategy)
-	deduplicator := pipeline.NewChunkDeduplicator(vectorRepo, 10000)
+	deduplicator := pipeline.NewChunkDeduplicator(vectorRepo, redisRepo, 10000)
+
+	if cfg.CacheWarmupLimit > 0 {
+		go func() {
+			slog.Info("starting async cache boot pre-warming", "limit", cfg.CacheWarmupLimit)
+			_ = deduplicator.WarmupCache(context.Background(), cfg.CacheWarmupLimit)
+		}()
+	}
 	openRouterClient := pipeline.NewOpenRouterClient(cfg.OpenRouterAPIKey, cfg.OpenRouterBaseURL)
 	vectorizer := pipeline.NewVectorizationScheduler(cfg.EmbeddingDimension, cfg.EmbeddingModelVersion, openRouterClient)
 	nlpPipeline := nlp.NewNLPPipeline(nil, nil, 64, 16)
@@ -183,6 +195,10 @@ func main() {
 
 	if db != nil {
 		db.Close()
+	}
+
+	if redisRepo != nil {
+		redisRepo.Close()
 	}
 
 	if telProvider != nil {

@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/oyamo/rag-pipe/pipe/internal/domain"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type VectorRepository struct {
@@ -26,19 +29,101 @@ func (r *VectorRepository) FindVectorIDByHash(ctx context.Context, hash string) 
 	ctx, span := tracer.Start(ctx, "VectorRepository.FindVectorIDByHash")
 	defer span.End()
 
+	span.SetAttributes(attribute.String("db.hash", hash))
+
+	t0 := time.Now()
 	query := `SELECT id FROM vectors WHERE hash = $1 LIMIT 1`
 
 	var id uuid.UUID
 	err := r.db.QueryRowContext(ctx, query, hash).Scan(&id)
+	duration := time.Since(t0).Milliseconds()
+	span.SetAttributes(attribute.Int64("db.duration_ms", duration))
+
 	if err != nil {
 		if err == sql.ErrNoRows {
+			span.SetAttributes(attribute.Bool("db.hit", false))
 			return uuid.Nil, nil
 		}
 		span.RecordError(err)
 		return uuid.Nil, fmt.Errorf("failed to query vector by hash: %w", err)
 	}
 
+	span.SetAttributes(attribute.Bool("db.hit", true))
 	return id, nil
+}
+
+func (r *VectorRepository) FindVectorIDsByHashesBatch(ctx context.Context, hashes []string) (map[string]uuid.UUID, error) {
+	if len(hashes) == 0 {
+		return nil, nil
+	}
+
+	tracer := otel.Tracer("repository.vector")
+	ctx, span := tracer.Start(ctx, "VectorRepository.FindVectorIDsByHashesBatch")
+	defer span.End()
+
+	span.SetAttributes(attribute.Int("db.batch_size", len(hashes)))
+
+	t0 := time.Now()
+	query := `SELECT hash, id FROM vectors WHERE hash = ANY($1)`
+
+	rows, err := r.db.QueryContext(ctx, query, pq.Array(hashes))
+	duration := time.Since(t0).Milliseconds()
+	span.SetAttributes(attribute.Int64("db.duration_ms", duration))
+
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("failed to query vector batch by hashes: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]uuid.UUID, len(hashes))
+	for rows.Next() {
+		var hash string
+		var id uuid.UUID
+		if err := rows.Scan(&hash, &id); err == nil {
+			result[hash] = id
+		}
+	}
+
+	span.SetAttributes(attribute.Int("db.hits_count", len(result)))
+	return result, nil
+}
+
+func (r *VectorRepository) FetchRecentVectorHashes(ctx context.Context, limit int) (map[string]uuid.UUID, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	tracer := otel.Tracer("repository.vector")
+	ctx, span := tracer.Start(ctx, "VectorRepository.FetchRecentVectorHashes")
+	defer span.End()
+
+	span.SetAttributes(attribute.Int("db.warmup_limit", limit))
+
+	t0 := time.Now()
+	query := `SELECT hash, id FROM vectors WHERE hash IS NOT NULL AND hash != '' ORDER BY created_at DESC LIMIT $1`
+
+	rows, err := r.db.QueryContext(ctx, query, limit)
+	duration := time.Since(t0).Milliseconds()
+	span.SetAttributes(attribute.Int64("db.duration_ms", duration))
+
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("failed to query recent vector hashes for warmup: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]uuid.UUID, limit)
+	for rows.Next() {
+		var hash string
+		var id uuid.UUID
+		if err := rows.Scan(&hash, &id); err == nil && hash != "" && id != uuid.Nil {
+			result[hash] = id
+		}
+	}
+
+	span.SetAttributes(attribute.Int("db.hashes_loaded", len(result)))
+	return result, nil
 }
 
 func formatVector(embedding []float32) string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -13,6 +14,8 @@ import (
 type StorageRepository struct {
 	client     *minio.Client
 	bucketName string
+	bucketOnce sync.Once
+	bucketErr  error
 }
 
 func NewStorageRepository(endpoint, accessKey, secretKey, bucketName string, useSSL bool) (*StorageRepository, error) {
@@ -31,25 +34,29 @@ func NewStorageRepository(endpoint, accessKey, secretKey, bucketName string, use
 }
 
 func (s *StorageRepository) EnsureBucket(ctx context.Context) error {
-	tracer := otel.Tracer("repository.storage")
-	ctx, span := tracer.Start(ctx, "StorageRepository.EnsureBucket")
-	defer span.End()
+	s.bucketOnce.Do(func() {
+		tracer := otel.Tracer("repository.storage")
+		ctx, span := tracer.Start(ctx, "StorageRepository.EnsureBucket")
+		defer span.End()
 
-	exists, err := s.client.BucketExists(ctx, s.bucketName)
-	if err != nil {
-		span.RecordError(err)
-		return fmt.Errorf("failed to check bucket existence: %w", err)
-	}
-
-	if !exists {
-		err = s.client.MakeBucket(ctx, s.bucketName, minio.MakeBucketOptions{})
+		exists, err := s.client.BucketExists(ctx, s.bucketName)
 		if err != nil {
 			span.RecordError(err)
-			return fmt.Errorf("failed to create bucket: %w", err)
+			s.bucketErr = fmt.Errorf("failed to check bucket existence: %w", err)
+			return
 		}
-	}
 
-	return nil
+		if !exists {
+			err = s.client.MakeBucket(ctx, s.bucketName, minio.MakeBucketOptions{})
+			if err != nil {
+				span.RecordError(err)
+				s.bucketErr = fmt.Errorf("failed to create bucket: %w", err)
+				return
+			}
+		}
+	})
+
+	return s.bucketErr
 }
 
 func (s *StorageRepository) UploadFile(ctx context.Context, objectName string, reader io.Reader, objectSize int64, contentType string) (string, error) {

@@ -30,6 +30,10 @@ type Config struct {
 	OpenRouterBaseURL     string
 	OTelServiceName       string
 	OTelCollectorURL      string
+	RedisURL              string
+	RedisPassword         string
+	RedisDB               int
+	CacheWarmupLimit      int
 }
 
 func loadDotEnv() {
@@ -189,6 +193,14 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	redisURL := getOptionalEnv("REDIS_URL", "localhost:6379")
+	redisPassword := getOptionalEnv("REDIS_PASSWORD", "")
+	redisDBStr := getOptionalEnv("REDIS_DB", "0")
+	redisDB, _ := strconv.Atoi(redisDBStr)
+
+	warmupLimitStr := getOptionalEnv("CACHE_WARMUP_LIMIT", "10000")
+	cacheWarmupLimit, _ := strconv.Atoi(warmupLimitStr)
+
 	return &Config{
 		Port:                  port,
 		DatabaseDSN:           dsn,
@@ -211,5 +223,9 @@ func LoadConfig() (*Config, error) {
 		OpenRouterBaseURL:     openRouterBaseURL,
 		OTelServiceName:       otelServiceName,
 		OTelCollectorURL:      otelCollectorURL,
+		RedisURL:              redisURL,
+		RedisPassword:         redisPassword,
+		RedisDB:               redisDB,
+		CacheWarmupLimit:      cacheWarmupLimit,
 	}, nil
 }
