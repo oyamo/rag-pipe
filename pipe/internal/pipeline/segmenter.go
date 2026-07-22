@@ -2,11 +2,14 @@ package pipeline
 
 import (
 	"context"
+	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/oyamo/rag-pipe/pipe/internal/domain"
+	"github.com/tiktoken-go/tokenizer"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -30,6 +33,8 @@ type DocumentSegmenter struct {
 	targetTokenBudget int
 	overlapTokens     int
 	strategy          ChunkStrategy
+	enc               tokenizer.Codec
+	encOnce           sync.Once
 }
 
 func NewDocumentSegmenter(targetTokenBudget, overlapTokens int, strategy string) *DocumentSegmenter {
@@ -54,8 +59,35 @@ func NewDocumentSegmenter(targetTokenBudget, overlapTokens int, strategy string)
 	}
 }
 
+func (s *DocumentSegmenter) getEncoder() tokenizer.Codec {
+	s.encOnce.Do(func() {
+		enc, err := tokenizer.Get(tokenizer.Cl100kBase)
+		if err != nil {
+			slog.Warn("failed to load embedded cl100k_base tokenizer codec", "error", err)
+			return
+		}
+		s.enc = enc
+	})
+	return s.enc
+}
+
 func (s *DocumentSegmenter) CountTokens(text string) int {
-	return 0
+	if strings.TrimSpace(text) == "" {
+		return 0
+	}
+
+	enc := s.getEncoder()
+	if enc == nil {
+		return len(strings.Fields(text))
+	}
+
+	ids, _, err := enc.Encode(text)
+	if err != nil {
+		slog.Warn("tiktoken encoding failed, falling back to word count", "error", err)
+		return len(strings.Fields(text))
+	}
+
+	return len(ids)
 }
 
 func (s *DocumentSegmenter) SegmentDocument(ctx context.Context, docID string, lines []ExtractedLine) ([]domain.Chunk, error) {
@@ -81,19 +113,64 @@ func (s *DocumentSegmenter) SegmentDocument(ctx context.Context, docID string, l
 	case StrategyExact:
 		return s.segmentExactTokens(docUUID, docID, lines)
 	case StrategySentence:
-		return s.segmentUnits(docUUID, docID, s.extractSentences(lines), "sentence-1.0")
+		return s.segmentUnits(docUUID, docID, s.extractSentences(lines), "tiktoken-sentence-1.0")
 	case StrategyCharacterBased:
 		return s.segmentCharacterBased(docUUID, docID, lines)
 	case StrategyParagraph:
 		fallthrough
 	default:
-		return s.segmentUnits(docUUID, docID, s.extractParagraphs(lines), "paragraph-1.0")
+		return s.segmentUnits(docUUID, docID, s.extractParagraphs(lines), "tiktoken-paragraph-1.0")
 	}
 }
 
-// 1. Exact Token Estimation Chunking
+// 1. Exact BPE Token-Aware Chunking (tiktoken-go/tokenizer)
 func (s *DocumentSegmenter) segmentExactTokens(docUUID uuid.UUID, docID string, lines []ExtractedLine) ([]domain.Chunk, error) {
-	return s.segmentUnits(docUUID, docID, s.extractParagraphs(lines), "exact-paragraph-1.0")
+	var sb strings.Builder
+	for _, l := range lines {
+		if txt := strings.TrimSpace(l.Text); txt != "" {
+			sb.WriteString(txt)
+			sb.WriteString(" ")
+		}
+	}
+
+	fullText := sb.String()
+	if strings.TrimSpace(fullText) == "" {
+		return nil, nil
+	}
+
+	enc := s.getEncoder()
+	if enc == nil {
+		return s.segmentUnits(docUUID, docID, s.extractParagraphs(lines), "paragraph-1.0")
+	}
+
+	ids, _, err := enc.Encode(fullText)
+	if err != nil || len(ids) == 0 {
+		return s.segmentUnits(docUUID, docID, s.extractParagraphs(lines), "paragraph-1.0")
+	}
+
+	step := s.calcStep(s.targetTokenBudget, s.overlapTokens)
+	var chunks []domain.Chunk
+
+	for i, idx := 0, 0; i < len(ids); i += step {
+		end := min(i+s.targetTokenBudget, len(ids))
+		chunkIDs := ids[i:end]
+
+		chunkText, err := enc.Decode(chunkIDs)
+		if err != nil {
+			chunkText = fullText
+		}
+
+		chunks = append(chunks, s.buildChunk(
+			docUUID, docID, idx, chunkText,
+			lines[0].PageNumber, lines[len(lines)-1].PageNumber,
+			0, 0, "tiktoken-exact-1.0",
+		))
+		idx++
+		if end == len(ids) {
+			break
+		}
+	}
+	return chunks, nil
 }
 
 // 2. Generic Unit-Based Chunking (Paragraphs & Sentences)
@@ -127,12 +204,11 @@ func (s *DocumentSegmenter) segmentUnits(docUUID uuid.UUID, docID string, units 
 
 		content := sb.String()
 		contentLen := len(content)
-		tokCount := s.CountTokens(content)
 
 		chunks = append(chunks, s.buildChunk(
 			docUUID, docID, chunkIndex, content,
 			buffer[0].startPage, buffer[len(buffer)-1].endPage,
-			tokCount, offset, offset+contentLen, version,
+			offset, offset+contentLen, version,
 		))
 
 		chunkIndex++
@@ -170,7 +246,7 @@ func (s *DocumentSegmenter) segmentCharacterBased(docUUID uuid.UUID, docID strin
 		chunks = append(chunks, s.buildChunk(
 			docUUID, docID, idx, chunkText,
 			lines[0].PageNumber, lines[len(lines)-1].PageNumber,
-			s.CountTokens(chunkText), i, end, "character-based-1.0",
+			i, end, "character-based-1.0",
 		))
 		idx++
 		if end == len(runes) {
@@ -250,7 +326,7 @@ func (s *DocumentSegmenter) calcStep(budget, overlap int) int {
 	return step
 }
 
-func (s *DocumentSegmenter) buildChunk(docUUID uuid.UUID, docID string, index int, content string, startPage, endPage, tokens, startOffset, endOffset int, version string) domain.Chunk {
+func (s *DocumentSegmenter) buildChunk(docUUID uuid.UUID, docID string, index int, content string, startPage, endPage, startOffset, endOffset int, version string) domain.Chunk {
 	id, err := uuid.NewV7()
 	if err != nil {
 		id = uuid.New()
@@ -269,7 +345,7 @@ func (s *DocumentSegmenter) buildChunk(docUUID uuid.UUID, docID string, index in
 			ExtractionTimestamp: time.Now().UTC(),
 			StartCharOffset:     startOffset,
 			EndCharOffset:       endOffset,
-			TokenCount:          tokens,
+			TokenCount:          s.CountTokens(content),
 		},
 		CreatedAt: time.Now().UTC(),
 	}

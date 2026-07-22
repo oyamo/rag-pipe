@@ -9,6 +9,7 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/minio/minio-go/v7 v7.0.70
 	github.com/nats-io/nats.go v1.34.1
+	github.com/tiktoken-go/tokenizer v0.2.1
 	github.com/yuin/goldmark v1.7.0
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.20.0

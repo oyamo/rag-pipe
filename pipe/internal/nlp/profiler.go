@@ -2,10 +2,13 @@ package nlp
 
 import (
 	"context"
+	"log/slog"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/abadojack/whatlanggo"
+	"github.com/tiktoken-go/tokenizer"
 	"go.opentelemetry.io/otel"
 )
 
@@ -20,10 +23,25 @@ type DocumentProfile struct {
 	TokenCount       int     `json:"token_count"`
 }
 
-type LanguageProfiler struct{}
+type LanguageProfiler struct {
+	enc     tokenizer.Codec
+	encOnce sync.Once
+}
 
 func NewLanguageProfiler() *LanguageProfiler {
 	return &LanguageProfiler{}
+}
+
+func (p *LanguageProfiler) getEncoder() tokenizer.Codec {
+	p.encOnce.Do(func() {
+		enc, err := tokenizer.Get(tokenizer.Cl100kBase)
+		if err != nil {
+			slog.Warn("failed to load embedded tokenizer in language profiler", "error", err)
+			return
+		}
+		p.enc = enc
+	})
+	return p.enc
 }
 
 func (p *LanguageProfiler) ProfileDocument(ctx context.Context, text string) *DocumentProfile {
@@ -35,6 +53,7 @@ func (p *LanguageProfiler) ProfileDocument(ctx context.Context, text string) *Do
 		return &DocumentProfile{
 			Language:   "en",
 			Confidence: 0.0,
+			TokenCount: 0,
 		}
 	}
 
@@ -85,6 +104,13 @@ func (p *LanguageProfiler) ProfileDocument(ctx context.Context, text string) *Do
 		avgSentenceLen = float64(len(words)) / float64(sentenceCount)
 	}
 
+	tokenCount := len(words)
+	if enc := p.getEncoder(); enc != nil {
+		if ids, _, err := enc.Encode(trimmed); err == nil {
+			tokenCount = len(ids)
+		}
+	}
+
 	return &DocumentProfile{
 		Language:         langStr,
 		Confidence:       confidence,
@@ -93,6 +119,6 @@ func (p *LanguageProfiler) ProfileDocument(ctx context.Context, text string) *Do
 		LexicalDiversity: lexicalDiversity,
 		DigitRatio:       digitRatio,
 		UppercaseRatio:   uppercaseRatio,
-		TokenCount:       0,
+		TokenCount:       tokenCount,
 	}
 }
