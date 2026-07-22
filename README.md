@@ -1,8 +1,9 @@
-# RAG-Pipe: Event-Driven Document Ingestion and Vector Search Pipeline
+# RAG-Pipe
+Event-Driven Document Ingestion and Vector Search Pipeline
 
 ## Abstract
 
-RAG-Pipe is a distributed document ingestion and vector search engine written in Go. It decouples API ingress from document processing and embedding generation using NATS JetStream. The platform features SHA-256 deduplication, exponential retries, Dead-Letter Queues (DLQ), and OpenTelemetry (Traces, Metrics, Logs) context propagation.
+RAG-Pipe is an enterprise-grade document processing and AI search engine designed for scale, speed, and cost efficiency. It automatically extracts, cleans, indexes, and searches complex documents in real time while reducing cloud infrastructure expenses.
 
 ---
 
@@ -17,6 +18,18 @@ RAG-Pipe is a distributed document ingestion and vector search engine written in
 * **Containerization**: Docker & Docker Compose
 * **Orchestration**: Kubernetes
 * **Database Migrations**: Liquibase
+
+---
+
+## Key Product Capabilities
+
+* **Concurrent Multi-Document Processing**: Built to process several documents simultaneously in parallel, scaling worker channels dynamically to handle heavy concurrent workloads without queue lockups.
+* **Dramatically Lowers AI & Cloud Costs**: Intelligently identifies duplicate document uploads before processing. Eliminates repetitive file storage, background processing, and expensive AI API fees.
+* **Handles Massive Upload Volumes Without Slowing Down**: Separates file uploads from background processing, allowing your system to stay fast and responsive even when uploading thousands of heavy documents at once.
+* **Self-Healing & Error Proof**: Automatically retries transient network glitches in the background and safely isolates broken files so your system never crashes or gets stuck.
+* **Complete System Visibility**: Gives your team real-time dashboards to track performance, processing speeds, system health, and operational costs.
+* **Built for Multi-Tenant SaaS & Enterprises**: Keeps data strictly separated and secure per customer or organization out of the box.
+* **Lightning Fast Performance**: Built for speed with low memory requirements, ensuring fast processing times and low hosting bills.
 
 ---
 
@@ -45,15 +58,6 @@ graph TD
     Inference -.->|OTel Telemetry| OTel
     OTel --> OpenObserve[OpenObserve UI]
 ```
-
----
-
-## Features
-
-* **Event-Driven Architecture**: Decouples API ingress from background processing via NATS JetStream.
-* **SHA-256 Deduplication**: Prevents duplicate document storage and redundant embedding computation.
-* **Fault Tolerance**: Automatic retry backoff with Dead-Letter Queue (DLQ) routing.
-* **OpenTelemetry Observability**: End-to-end W3C trace context, metrics, and structured log aggregation.
 
 ---
 
