@@ -46,7 +46,6 @@ func (p *LanguageProfiler) ProfileDocument(ctx context.Context, text string) *Do
 	confidence := info.Confidence
 
 	words := strings.Fields(trimmed)
-	tokenCount := int(float64(len(words)) * 1.3)
 	uniqueWords := make(map[string]bool)
 	digitChars := 0
 	upperChars := 0
@@ -94,6 +93,6 @@ func (p *LanguageProfiler) ProfileDocument(ctx context.Context, text string) *Do
 		LexicalDiversity: lexicalDiversity,
 		DigitRatio:       digitRatio,
 		UppercaseRatio:   uppercaseRatio,
-		TokenCount:       tokenCount,
+		TokenCount:       0,
 	}
 }

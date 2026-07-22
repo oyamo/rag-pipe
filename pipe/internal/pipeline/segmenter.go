@@ -2,14 +2,11 @@ package pipeline
 
 import (
 	"context"
-	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/oyamo/rag-pipe/pipe/internal/domain"
-	"github.com/pkoukk/tiktoken-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -33,8 +30,6 @@ type DocumentSegmenter struct {
 	targetTokenBudget int
 	overlapTokens     int
 	strategy          ChunkStrategy
-	tke               *tiktoken.Tiktoken
-	tkeOnce           sync.Once
 }
 
 func NewDocumentSegmenter(targetTokenBudget, overlapTokens int, strategy string) *DocumentSegmenter {
@@ -59,24 +54,8 @@ func NewDocumentSegmenter(targetTokenBudget, overlapTokens int, strategy string)
 	}
 }
 
-func (s *DocumentSegmenter) getEncoder() *tiktoken.Tiktoken {
-	s.tkeOnce.Do(func() {
-		tke, err := tiktoken.GetEncoding("cl100k_base")
-		if err != nil {
-			slog.Warn("tiktoken encoder initialization failed (offline or network error), falling back to word approximation", "error", err)
-			return
-		}
-		s.tke = tke
-	})
-	return s.tke
-}
-
 func (s *DocumentSegmenter) CountTokens(text string) int {
-	tke := s.getEncoder()
-	if tke != nil {
-		return len(tke.Encode(text, nil, nil))
-	}
-	return int(float64(len(strings.Fields(text))) * 1.3)
+	return 0
 }
 
 func (s *DocumentSegmenter) SegmentDocument(ctx context.Context, docID string, lines []ExtractedLine) ([]domain.Chunk, error) {
@@ -102,52 +81,19 @@ func (s *DocumentSegmenter) SegmentDocument(ctx context.Context, docID string, l
 	case StrategyExact:
 		return s.segmentExactTokens(docUUID, docID, lines)
 	case StrategySentence:
-		return s.segmentUnits(docUUID, docID, s.extractSentences(lines), "tiktoken-sentence-1.0")
+		return s.segmentUnits(docUUID, docID, s.extractSentences(lines), "sentence-1.0")
 	case StrategyCharacterBased:
 		return s.segmentCharacterBased(docUUID, docID, lines)
 	case StrategyParagraph:
 		fallthrough
 	default:
-		return s.segmentUnits(docUUID, docID, s.extractParagraphs(lines), "tiktoken-paragraph-1.0")
+		return s.segmentUnits(docUUID, docID, s.extractParagraphs(lines), "paragraph-1.0")
 	}
 }
 
-// 1. Exact BPE Token-Aware Chunking (tiktoken)
+// 1. Exact Token Estimation Chunking
 func (s *DocumentSegmenter) segmentExactTokens(docUUID uuid.UUID, docID string, lines []ExtractedLine) ([]domain.Chunk, error) {
-	var sb strings.Builder
-	for _, l := range lines {
-		if txt := strings.TrimSpace(l.Text); txt != "" {
-			sb.WriteString(txt)
-			sb.WriteString(" ")
-		}
-	}
-
-	fullText := sb.String()
-	if strings.TrimSpace(fullText) == "" {
-		return nil, nil
-	}
-
-	tke := s.getEncoder()
-	if tke == nil {
-		return s.segmentUnits(docUUID, docID, s.extractParagraphs(lines), "tiktoken-paragraph-1.0")
-	}
-
-	tokens := tke.Encode(fullText, nil, nil)
-	step := s.calcStep(s.targetTokenBudget, s.overlapTokens)
-	var chunks []domain.Chunk
-
-	for i, idx := 0, 0; i < len(tokens); i += step {
-		end := min(i+s.targetTokenBudget, len(tokens))
-		chunkTokens := tokens[i:end]
-		chunkText := tke.Decode(chunkTokens)
-
-		chunks = append(chunks, s.buildChunk(docUUID, docID, idx, chunkText, lines[0].PageNumber, lines[len(lines)-1].PageNumber, len(chunkTokens), 0, 0, "tiktoken-exact-1.0"))
-		idx++
-		if end == len(tokens) {
-			break
-		}
-	}
-	return chunks, nil
+	return s.segmentUnits(docUUID, docID, s.extractParagraphs(lines), "exact-paragraph-1.0")
 }
 
 // 2. Generic Unit-Based Chunking (Paragraphs & Sentences)
