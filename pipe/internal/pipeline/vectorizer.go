@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,8 @@ import (
 const (
 	DefaultMaxRetries     = 3
 	DefaultRetryBackoffMs = 100
+	SubBatchSize          = 16
+	MaxConcurrentCalls    = 8
 )
 
 type VectorizationScheduler struct {
@@ -36,11 +39,65 @@ func NewVectorizationScheduler(dimension int, modelVersion string, client *OpenR
 }
 
 func (v *VectorizationScheduler) GenerateBatchEmbeddings(ctx context.Context, chunks []domain.Chunk) ([]domain.Vector, error) {
+	if len(chunks) == 0 {
+		return nil, nil
+	}
+
 	_, span := otel.Tracer("pipeline.vectorizer").Start(ctx, "VectorizationScheduler.GenerateBatchEmbeddings")
 	defer span.End()
 
+	if len(chunks) <= SubBatchSize {
+		return v.processSubBatch(ctx, chunks)
+	}
+
+	subBatches := (len(chunks) + SubBatchSize - 1) / SubBatchSize
+	results := make([][]domain.Vector, subBatches)
+	errChan := make(chan error, subBatches)
+	sem := make(chan struct{}, MaxConcurrentCalls)
+	var wg sync.WaitGroup
+
+	for i := 0; i < subBatches; i++ {
+		start := i * SubBatchSize
+		end := min(start+SubBatchSize, len(chunks))
+
+		wg.Add(1)
+		go func(index int, batch []domain.Chunk) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			vecs, err := v.processSubBatch(ctx, batch)
+			if err != nil {
+				errChan <- err
+				return
+			}
+			results[index] = vecs
+		}(i, chunks[start:end])
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	if err := <-errChan; err != nil {
+		span.RecordError(err)
+		return nil, err
+	}
+
+	var finalVectors []domain.Vector
+	for _, batchVecs := range results {
+		finalVectors = append(finalVectors, batchVecs...)
+	}
+
+	return finalVectors, nil
+}
+
+func (v *VectorizationScheduler) processSubBatch(ctx context.Context, chunks []domain.Chunk) ([]domain.Vector, error) {
 	if len(chunks) == 0 {
 		return nil, nil
+	}
+
+	if v.client == nil {
+		return nil, fmt.Errorf("openrouter client is not configured")
 	}
 
 	inputs := make([]domain.MultimodalInput, len(chunks))
@@ -59,19 +116,13 @@ func (v *VectorizationScheduler) GenerateBatchEmbeddings(ctx context.Context, ch
 	var err error
 
 	for attempt := 1; attempt <= DefaultMaxRetries; attempt++ {
-		if v.client != nil {
-			dataItems, err = v.client.CreateEmbeddings(ctx, v.modelVersion, inputs)
-		} else {
-			err = fmt.Errorf("openrouter client is not configured")
-		}
-
+		dataItems, err = v.client.CreateEmbeddings(ctx, v.modelVersion, inputs)
 		if err == nil && len(dataItems) == len(chunks) {
 			break
 		}
 
 		if attempt == DefaultMaxRetries {
-			span.RecordError(err)
-			return nil, fmt.Errorf("batch embedding generation failed after %d retries: %w", DefaultMaxRetries, err)
+			return nil, fmt.Errorf("batch embedding failed: %w", err)
 		}
 
 		backoff := time.Duration(DefaultRetryBackoffMs*attempt) * time.Millisecond
@@ -82,7 +133,7 @@ func (v *VectorizationScheduler) GenerateBatchEmbeddings(ctx context.Context, ch
 		}
 	}
 
-	var vectors []domain.Vector
+	vectors := make([]domain.Vector, len(dataItems))
 	for i, item := range dataItems {
 		chunk := chunks[i]
 		vecID, err := uuid.NewV7()
@@ -95,7 +146,7 @@ func (v *VectorizationScheduler) GenerateBatchEmbeddings(ctx context.Context, ch
 			dim = v.dimension
 		}
 
-		vector := domain.Vector{
+		vectors[i] = domain.Vector{
 			ID:           vecID,
 			Hash:         chunk.Hash,
 			Embedding:    item.Embedding,
@@ -103,8 +154,6 @@ func (v *VectorizationScheduler) GenerateBatchEmbeddings(ctx context.Context, ch
 			Dimensions:   dim,
 			CreatedAt:    time.Now().UTC(),
 		}
-
-		vectors = append(vectors, vector)
 	}
 
 	return vectors, nil

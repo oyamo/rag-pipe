@@ -51,34 +51,36 @@ func NewPipelineWorker(
 }
 
 func (w *PipelineWorker) ProcessDocument(ctx context.Context, event *domain.IngestionEvent) error {
+	if event == nil || event.DocumentID == "" {
+		return nil
+	}
+
 	tracer := otel.Tracer("worker.pipeline")
 	ctx, span := tracer.Start(ctx, "PipelineWorker.ProcessDocument")
 	defer span.End()
 
-	slog.InfoContext(ctx, "starting pipeline processing for document", "document_id", event.DocumentID, "file_key", event.FileKey)
+	slog.InfoContext(ctx, "starting pipeline processing", "document_id", event.DocumentID, "file_key", event.FileKey)
 
-	// Step 1: Download File from Storage
-	downloadCtx, downloadSpan := tracer.Start(ctx, "PipelineWorker.DownloadStorageFile")
+	downloadCtx, downloadSpan := tracer.Start(ctx, "PipelineWorker.FetchStorageStream")
 	t0 := time.Now()
-	tmpFilePath, cleanup, err := w.storage.DownloadTempFile(downloadCtx, event.FileKey)
+	objReader, err := w.storage.FetchObjectReader(downloadCtx, event.FileKey)
 	downloadDuration := time.Since(t0).Milliseconds()
 	downloadSpan.SetAttributes(attribute.Int64("download.duration_ms", downloadDuration))
 	downloadSpan.End()
 
 	if err != nil {
 		span.RecordError(err)
-		return fmt.Errorf("failed to download document from storage: %w", err)
+		return fmt.Errorf("failed to fetch document stream: %w", err)
 	}
-	defer cleanup()
+	defer objReader.Close()
 
-	// Step 2: Extract Text (PDF pdftotext)
 	extractCtx, extractSpan := tracer.Start(ctx, "PipelineWorker.PDFTextExtraction")
 	t0 = time.Now()
 	lineChan := make(chan pipeline.ExtractedLine, 500)
 	var extractErr error
 
 	go func() {
-		extractErr = w.extractor.ExtractTextStream(extractCtx, tmpFilePath, lineChan)
+		extractErr = w.extractor.ExtractFromReader(extractCtx, objReader, lineChan)
 	}()
 
 	var extractedLines []pipeline.ExtractedLine
@@ -101,7 +103,6 @@ func (w *PipelineWorker) ProcessDocument(ctx context.Context, event *domain.Inge
 
 	normalizedLines := w.normalizer.NormalizeLines(ctx, extractedLines)
 
-	// Step 3: Segment Document
 	segmentCtx, segmentSpan := tracer.Start(ctx, "PipelineWorker.DocumentSegmentation")
 	t0 = time.Now()
 	rawChunks, err := w.segmenter.SegmentDocument(segmentCtx, event.DocumentID, normalizedLines)
@@ -114,16 +115,13 @@ func (w *PipelineWorker) ProcessDocument(ctx context.Context, event *domain.Inge
 		return fmt.Errorf("segmentation error: %w", err)
 	}
 
-	// Step 4: NLP Quality & Entity Profiling
-	nlpCtx, nlpSpan := tracer.Start(ctx, "PipelineWorker.NLPProfiling")
-	t0 = time.Now()
-	var enrichedChunks []domain.Chunk
-	for i := range rawChunks {
-		chk := rawChunks[i]
-		if w.nlpPipeline.EnrichChunk(nlpCtx, &chk) {
-			enrichedChunks = append(enrichedChunks, chk)
-		}
+	if len(rawChunks) == 0 {
+		return nil
 	}
+
+	nlpCtx, nlpSpan := tracer.Start(ctx, "PipelineWorker.NLPProfilingParallel")
+	t0 = time.Now()
+	enrichedChunks := w.nlpPipeline.EnrichChunksParallel(nlpCtx, rawChunks)
 	nlpDuration := time.Since(t0).Milliseconds()
 	nlpSpan.SetAttributes(attribute.Int64("nlp.duration_ms", nlpDuration), attribute.Int("nlp.enriched_chunks", len(enrichedChunks)))
 	nlpSpan.End()
@@ -133,7 +131,6 @@ func (w *PipelineWorker) ProcessDocument(ctx context.Context, event *domain.Inge
 		return nil
 	}
 
-	// Step 5: Deduplication
 	dedupCtx, dedupSpan := tracer.Start(ctx, "PipelineWorker.ChunkDeduplication")
 	t0 = time.Now()
 	var chunksToEmbed []domain.Chunk
@@ -163,10 +160,9 @@ func (w *PipelineWorker) ProcessDocument(ctx context.Context, event *domain.Inge
 	dedupSpan.SetAttributes(attribute.Int64("dedup.duration_ms", dedupDuration), attribute.Int("dedup.duplicates_found", dedupCount))
 	dedupSpan.End()
 
-	// Step 6: Generate Embeddings (OpenRouter API)
 	var newVectors []domain.Vector
 	if len(chunksToEmbed) > 0 {
-		vecCtx, vecSpan := tracer.Start(ctx, "PipelineWorker.GenerateOpenRouterEmbeddings")
+		vecCtx, vecSpan := tracer.Start(ctx, "PipelineWorker.GenerateOpenRouterEmbeddingsParallel")
 		t0 = time.Now()
 		newVectors, err = w.vectorizer.GenerateBatchEmbeddings(vecCtx, chunksToEmbed)
 		vecDuration := time.Since(t0).Milliseconds()
@@ -186,7 +182,6 @@ func (w *PipelineWorker) ProcessDocument(ctx context.Context, event *domain.Inge
 		}
 	}
 
-	// Step 7: Bulk DB Insertion (Postgres pgvector)
 	dbCtx, dbSpan := tracer.Start(ctx, "PipelineWorker.BulkDatabaseSave")
 	t0 = time.Now()
 	err = w.vectorRepo.SaveBulk(dbCtx, newVectors, finalChunks)

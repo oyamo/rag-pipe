@@ -32,16 +32,17 @@ func (e *PopplerExtractor) ExtractTextStream(ctx context.Context, pdfFilePath st
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		span.RecordError(err)
-		return fmt.Errorf("failed to create stdout pipe for pdftotext: %w", err)
+		return fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
 	err = cmd.Start()
 	if err != nil {
 		span.RecordError(err)
-		return fmt.Errorf("failed to start pdftotext command: %w", err)
+		return fmt.Errorf("failed to start pdftotext: %w", err)
 	}
 
 	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 64*1024), 5*1024*1024)
 	currentPage := 1
 
 	for scanner.Scan() {
@@ -65,7 +66,7 @@ func (e *PopplerExtractor) ExtractTextStream(ctx context.Context, pdfFilePath st
 	err = scanner.Err()
 	if err != nil {
 		span.RecordError(err)
-		return fmt.Errorf("error reading pdftotext stdout: %w", err)
+		return fmt.Errorf("scanner error: %w", err)
 	}
 
 	err = cmd.Wait()
@@ -99,6 +100,7 @@ func (e *PopplerExtractor) ExtractFromReader(ctx context.Context, reader io.Read
 	}
 
 	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 64*1024), 5*1024*1024)
 	currentPage := 1
 
 	for scanner.Scan() {

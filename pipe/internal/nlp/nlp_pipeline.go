@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/oyamo/rag-pipe/pipe/internal/domain"
@@ -34,11 +35,42 @@ func NewNLPPipeline(stopWords map[string]bool, honorifics map[string]bool, lshHa
 	}
 }
 
-func (p *NLPPipeline) EnrichChunk(ctx context.Context, chunk *domain.Chunk) bool {
+func (p *NLPPipeline) EnrichChunksParallel(ctx context.Context, rawChunks []domain.Chunk) []domain.Chunk {
+	if len(rawChunks) == 0 {
+		return nil
+	}
+
 	tracer := otel.Tracer("nlp.pipeline")
-	ctx, span := tracer.Start(ctx, "NLPPipeline.EnrichChunk")
+	ctx, span := tracer.Start(ctx, "NLPPipeline.EnrichChunksParallel")
 	defer span.End()
 
+	results := make([]*domain.Chunk, len(rawChunks))
+	var wg sync.WaitGroup
+
+	for i := range rawChunks {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			chk := rawChunks[idx]
+			if p.EnrichChunk(ctx, &chk) {
+				results[idx] = &chk
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	var enriched []domain.Chunk
+	for _, res := range results {
+		if res != nil {
+			enriched = append(enriched, *res)
+		}
+	}
+
+	return enriched
+}
+
+func (p *NLPPipeline) EnrichChunk(ctx context.Context, chunk *domain.Chunk) bool {
 	normalizedText := p.normalizer.NormalizeText(ctx, chunk.Content)
 	if normalizedText == "" {
 		return false
@@ -47,7 +79,6 @@ func (p *NLPPipeline) EnrichChunk(ctx context.Context, chunk *domain.Chunk) bool
 
 	qualityScore := p.qualityFilter.CalculateQualityScore(ctx, normalizedText)
 	if qualityScore < 0.25 {
-		slog.Debug("chunk rejected by nlp quality score", "chunk_id", chunk.ID.String(), "score", qualityScore)
 		return false
 	}
 
@@ -77,7 +108,6 @@ func (p *NLPPipeline) EnrichChunk(ctx context.Context, chunk *domain.Chunk) bool
 	sig := p.lsh.ComputeSignature(normalizedText)
 	isNearDup, existingVecID := p.lsh.FindNearDuplicate(ctx, sig)
 	if isNearDup {
-		slog.Debug("chunk identified as near-duplicate by minhash lsh", "chunk_id", chunk.ID.String(), "existing_vector_id", existingVecID.String())
 		chunk.VectorID = existingVecID
 	}
 
