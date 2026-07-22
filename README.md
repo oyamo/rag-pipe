@@ -1,5 +1,5 @@
 # RAG-Pipe
-Event-Driven Document Ingestion and Vector Search Pipeline
+Event-Driven Document Ingestion and Vector Generation Pipeline
 
 ## Abstract
 
