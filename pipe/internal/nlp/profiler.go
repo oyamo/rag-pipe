@@ -28,14 +28,6 @@ func NewLanguageProfiler() *LanguageProfiler {
 	detector := lingua.NewLanguageDetectorBuilder().
 		FromLanguages(
 			lingua.English,
-			lingua.Spanish,
-			lingua.French,
-			lingua.German,
-			lingua.Chinese,
-			lingua.Japanese,
-			lingua.Arabic,
-			lingua.Portuguese,
-			lingua.Russian,
 			lingua.Swahili,
 		).
 		Build()
